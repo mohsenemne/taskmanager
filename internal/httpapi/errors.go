@@ -2,12 +2,12 @@ package httpapi
 
 import (
 	"errors"
-	"log/slog"
 	"net/http"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/mohsenemne/taskmanager/internal/observability"
 	"github.com/mohsenemne/taskmanager/internal/task"
 )
 
@@ -30,7 +30,9 @@ func writeError(c *gin.Context, err error) {
 	case errors.Is(err, task.ErrConflict):
 		writeJSONError(c, http.StatusConflict, codeConflict, "task already exists")
 	default:
-		slog.ErrorContext(c.Request.Context(), "unhandled error", "error", err)
+		// The request logger carries the request_id, so this line can be
+		// correlated with the access log and, later, the trace.
+		observability.LoggerFrom(c.Request.Context()).Error("unhandled error", "error", err)
 		writeJSONError(c, http.StatusInternalServerError, codeInternal, "internal server error")
 	}
 }

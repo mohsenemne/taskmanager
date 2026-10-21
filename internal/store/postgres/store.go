@@ -186,6 +186,16 @@ func (s *Store) Delete(ctx context.Context, id uuid.UUID) error {
 	return nil
 }
 
+// CountTasks returns the number of stored tasks. It backs the tasks_count
+// gauge and is not part of the repository contract the service depends on.
+func (s *Store) CountTasks(ctx context.Context) (int64, error) {
+	var total int64
+	if err := s.pool.QueryRow(ctx, `SELECT count(*) FROM tasks`).Scan(&total); err != nil {
+		return 0, fmt.Errorf("count tasks: %w", err)
+	}
+	return total, nil
+}
+
 // scanTask maps one row of the shared projection into a domain task.
 func scanTask(row pgx.Row) (task.Task, error) {
 	var (

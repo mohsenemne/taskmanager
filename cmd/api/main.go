@@ -7,9 +7,12 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -20,6 +23,7 @@ import (
 	"github.com/mohsenemne/taskmanager/internal/app"
 	"github.com/mohsenemne/taskmanager/internal/config"
 	"github.com/mohsenemne/taskmanager/internal/httpapi"
+	"github.com/mohsenemne/taskmanager/internal/observability"
 	"github.com/mohsenemne/taskmanager/internal/store/postgres"
 )
 
@@ -34,6 +38,9 @@ import (
 //	go build -ldflags "-X main.version=v1.2.3"
 var version = "dev"
 
+// taskCountInterval is how often the tasks_count gauge is refreshed.
+const taskCountInterval = 15 * time.Second
+
 func main() {
 	if err := run(); err != nil {
 		slog.Error("service stopped", "error", err)
@@ -47,9 +54,7 @@ func run() error {
 		return fmt.Errorf("load config: %w", err)
 	}
 
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-		Level: cfg.LogLevel,
-	}))
+	logger := observability.NewLogger(cfg.LogLevel)
 	slog.SetDefault(logger)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -64,13 +69,37 @@ func run() error {
 	if err := pool.Ping(ctx); err != nil {
 		return fmt.Errorf("ping database: %w", err)
 	}
+	// Log where we connected, never the DSN: it carries the password.
+	if u, err := url.Parse(cfg.DatabaseURL); err == nil {
+		logger.Info("database connected", "host", u.Host, "database", strings.TrimPrefix(u.Path, "/"))
+	}
 
 	if err := postgres.Migrate(ctx, cfg.DatabaseURL); err != nil {
 		return fmt.Errorf("migrate database: %w", err)
 	}
+	logger.Info("migrations applied")
+
+	store := postgres.New(pool)
+	svc := app.NewTaskService(store)
+
+	metrics := observability.NewMetrics(version, cfg.Env)
+	observability.RegisterPoolMetrics(metrics.Registry, func() observability.PoolStats {
+		stat := pool.Stat()
+		return observability.PoolStats{
+			Acquired: stat.AcquiredConns(),
+			Idle:     stat.IdleConns(),
+			Total:    stat.TotalConns(),
+			Max:      stat.MaxConns(),
+		}
+	})
+	observability.StartTaskCount(ctx, taskCountInterval, store.CountTasks, metrics.TasksCount, logger)
 
 	gin.SetMode(gin.ReleaseMode)
-	router := httpapi.NewRouter(app.NewTaskService(postgres.New(pool)), pool)
+	router := httpapi.NewRouter(svc, pool,
+		observability.RequestLogger(logger),
+		metrics.Middleware(),
+	)
+	router.GET("/metrics", gin.WrapH(metrics.Handler()))
 
 	// Swagger UI is mounted outside the versioned API group. The spec it serves
 	// is generated from handler annotations by `make swag`.
@@ -108,10 +137,11 @@ func run() error {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 	defer cancel()
 
+	start := time.Now()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		return fmt.Errorf("shutdown: %w", err)
 	}
 
-	logger.Info("shutdown complete")
+	logger.Info("shutdown complete", "duration_ms", float64(time.Since(start).Microseconds())/1000)
 	return nil
 }

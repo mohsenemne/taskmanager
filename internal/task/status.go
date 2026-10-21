@@ -1,7 +1,5 @@
 package task
 
-import "fmt"
-
 // Status is the lifecycle state of a task.
 type Status string
 
@@ -20,13 +18,4 @@ func (s Status) Valid() bool {
 	default:
 		return false
 	}
-}
-
-// ParseStatus converts a raw string into a valid Status.
-func ParseStatus(raw string) (Status, error) {
-	s := Status(raw)
-	if !s.Valid() {
-		return "", fmt.Errorf("%w: status %q must be one of todo, in_progress or done", ErrInvalid, raw)
-	}
-	return s, nil
 }

@@ -1,0 +1,14 @@
+with-expecter: true
+# Each mock lives next to the interface it implements, in a mocks subpackage.
+dir: "{{.InterfaceDir}}/mocks"
+outpkg: mocks
+filename: "{{.InterfaceName | snakecase}}.go"
+# Keep generated files stable across mockery upgrades: no version in the
+# header and no type-alias rewriting.
+disable-version-string: true
+resolve-type-alias: false
+issue-845-fix: true
+packages:
+  github.com/mohsenemne/taskmanager/internal/task:
+    interfaces:
+      Repository:

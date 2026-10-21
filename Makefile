@@ -2,7 +2,10 @@ SHELL   := /bin/bash
 BINARY  := bin/api
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 
-.PHONY: help env build run test test-integration test-all cover vet fmt lint tidy clean
+# Generated mocks are not application code, so they are excluded from coverage.
+COVERPKG := $(shell go list ./internal/... | grep -v /mocks | paste -sd, -)
+
+.PHONY: help env build run test test-integration test-all cover vet fmt lint mocks tidy clean
 
 help: ## Show the available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -30,7 +33,7 @@ test-all: ## Run unit and integration tests
 	go test -race -count=1 ./...
 
 cover: ## Run every test and print the total coverage (needs Docker)
-	go test -race -count=1 -coverpkg=./internal/... -coverprofile=coverage.out ./...
+	go test -race -count=1 -coverpkg=$(COVERPKG) -coverprofile=coverage.out ./...
 	@go tool cover -func=coverage.out | tail -n 1
 
 vet: ## Run go vet
@@ -46,6 +49,9 @@ lint: ## Run golangci-lint when installed, otherwise fall back to go vet
 		echo "golangci-lint not found, falling back to go vet"; \
 		go vet ./...; \
 	fi
+
+mocks: ## Regenerate the mocks from the interfaces (mockery)
+	go tool mockery
 
 tidy: ## Tidy go.mod and go.sum
 	go mod tidy

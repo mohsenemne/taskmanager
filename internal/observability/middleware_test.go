@@ -29,6 +29,7 @@ func newTestRouter(middleware ...gin.HandlerFunc) *gin.Engine {
 
 	router := gin.New()
 	router.Use(middleware...)
+
 	return router
 }
 
@@ -51,7 +52,7 @@ func TestMiddlewareLabelsUnmatchedRoutes(t *testing.T) {
 	metrics := observability.NewMetrics("test", "test")
 
 	router := newTestRouter(metrics.Middleware())
-	router.GET("/ping", func(c *gin.Context) {})
+	router.GET("/ping", func(_ *gin.Context) {})
 
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/nope/123", nil))
@@ -66,6 +67,7 @@ func TestMiddlewareLabelsUnmatchedRoutes(t *testing.T) {
 
 func TestRequestLoggerCarriesRequestID(t *testing.T) {
 	var buf bytes.Buffer
+
 	logger := slog.New(slog.NewJSONHandler(&buf, nil))
 
 	router := newTestRouter(observability.RequestLogger(logger))
@@ -89,7 +91,7 @@ func TestRequestLoggerReusesIncomingRequestID(t *testing.T) {
 	logger := slog.New(slog.NewJSONHandler(io.Discard, nil))
 
 	router := newTestRouter(observability.RequestLogger(logger))
-	router.GET("/ping", func(c *gin.Context) { c.Status(http.StatusOK) })
+	router.GET("/ping", func(_ *gin.Context) {})
 
 	req := httptest.NewRequest(http.MethodGet, "/ping", nil)
 	req.Header.Set("X-Request-ID", "caller-supplied-id")
@@ -117,7 +119,7 @@ func TestMiddlewareAttachesTraceExemplar(t *testing.T) {
 		otelgin.Middleware("test-service"),
 		metrics.Middleware(),
 	)
-	router.GET("/ping", func(c *gin.Context) { c.Status(http.StatusOK) })
+	router.GET("/ping", func(_ *gin.Context) {})
 
 	router.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/ping", nil))
 
@@ -125,10 +127,12 @@ func TestMiddlewareAttachesTraceExemplar(t *testing.T) {
 	require.NoError(t, err)
 
 	var found int
+
 	for _, family := range families {
 		if family.GetName() != "http_request_duration_seconds" {
 			continue
 		}
+
 		for _, metric := range family.GetMetric() {
 			for _, bucket := range metric.GetHistogram().GetBucket() {
 				if bucket.GetExemplar() != nil {

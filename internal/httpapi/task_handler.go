@@ -13,7 +13,8 @@ import (
 	"github.com/mohsenemne/taskmanager/internal/task"
 )
 
-// maxBodyBytes bounds request bodies so a malformed client cannot exhaust memory.
+// maxBodyBytes bounds request bodies so a malformed client cannot exhaust
+// memory.
 const maxBodyBytes = 1 << 20 // 1 MiB
 
 // TaskService is the part of the application layer the API depends on. It is
@@ -121,7 +122,11 @@ func (h *taskHandler) list(c *gin.Context) {
 
 	resp := ListResponse{
 		Items: make([]TaskResponse, 0, len(items)),
-		Page:  PageMeta{Total: total, Limit: filter.Limit, Offset: filter.Offset},
+		Page: PageMeta{
+			Total:  total,
+			Limit:  filter.Limit,
+			Offset: filter.Offset,
+		},
 	}
 	for _, item := range items {
 		resp.Items = append(resp.Items, newTaskResponse(item))
@@ -196,6 +201,7 @@ func bindJSON(c *gin.Context, dst any) error {
 	if err := c.ShouldBindJSON(dst); err != nil {
 		return errors.New("malformed request body")
 	}
+
 	return nil
 }
 
@@ -207,6 +213,7 @@ func taskID(c *gin.Context) (uuid.UUID, bool) {
 		writeBadRequest(c, "task id must be a valid UUID")
 		return uuid.Nil, false
 	}
+
 	return id, true
 }
 
@@ -219,8 +226,11 @@ func parseFilter(c *gin.Context) (task.Filter, error) {
 	if raw := c.Query("status"); raw != "" {
 		status, err := task.ParseStatus(raw)
 		if err != nil {
-			return task.Filter{}, errors.New("status must be one of todo, in_progress or done")
+			return task.Filter{}, errors.New(
+				"status must be one of todo, in_progress or done",
+			)
 		}
+
 		filter.Status = status
 	}
 
@@ -231,16 +241,23 @@ func parseFilter(c *gin.Context) (task.Filter, error) {
 	if raw := c.Query("limit"); raw != "" {
 		limit, err := strconv.Atoi(raw)
 		if err != nil || limit < 1 || limit > task.MaxPageSize {
-			return task.Filter{}, fmt.Errorf("limit must be an integer between 1 and %d", task.MaxPageSize)
+			return task.Filter{}, fmt.Errorf(
+				"limit must be an integer between 1 and %d",
+				task.MaxPageSize,
+			)
 		}
+
 		filter.Limit = limit
 	}
 
 	if raw := c.Query("offset"); raw != "" {
 		offset, err := strconv.Atoi(raw)
 		if err != nil || offset < 0 {
-			return task.Filter{}, errors.New("offset must be a non-negative integer")
+			return task.Filter{}, errors.New(
+				"offset must be a non-negative integer",
+			)
 		}
+
 		filter.Offset = offset
 	}
 

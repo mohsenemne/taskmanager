@@ -1,0 +1,36 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  default: standard
+  enable:
+    - bodyclose
+    - misspell
+    - revive
+    - gocritic
+    - staticcheck
+    - gocognit
+    - funlen
+    - nestif
+    - lll
+    - wsl_v5
+  settings:
+    lll:
+      line-length: 80
+      tab-width: 4
+  exclusions:
+    # Generated code (swag docs, mockery mocks) is not ours to format.
+    generated: strict
+    paths:
+      - api/docs
+      - (^|/)mocks/
+    rules:
+      # Swagger annotations are machine-read directives, not prose; wrapping
+      # them would change what swag parses.
+      - linters: [lll]
+        source: "^// @"
+      # Table-driven tests legitimately carry long literals and long functions.
+      - linters: [lll, funlen]
+        path: _test\.go

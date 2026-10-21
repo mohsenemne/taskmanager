@@ -28,7 +28,10 @@ type TracingInfo struct {
 
 // NewTracerProvider builds the provider, installs it globally and configures
 // W3C trace-context propagation so an incoming traceparent is honoured.
-func NewTracerProvider(ctx context.Context, info TracingInfo) (*sdktrace.TracerProvider, error) {
+func NewTracerProvider(
+	ctx context.Context,
+	info TracingInfo,
+) (*sdktrace.TracerProvider, error) {
 	exporter, err := newSpanExporter(ctx, info.Endpoint)
 	if err != nil {
 		return nil, err
@@ -44,7 +47,11 @@ func NewTracerProvider(ctx context.Context, info TracingInfo) (*sdktrace.TracerP
 	return provider, nil
 }
 
-func newTracerProvider(_ context.Context, exporter sdktrace.SpanExporter, info TracingInfo) *sdktrace.TracerProvider {
+func newTracerProvider(
+	_ context.Context,
+	exporter sdktrace.SpanExporter,
+	info TracingInfo,
+) *sdktrace.TracerProvider {
 	res, err := resource.Merge(
 		resource.Default(),
 		resource.NewWithAttributes(
@@ -64,11 +71,16 @@ func newTracerProvider(_ context.Context, exporter sdktrace.SpanExporter, info T
 		// Locally everything is sampled. A production deployment would dial
 		// this down to a ratio, which is why the sampler is not hard-coded into
 		// the middleware.
-		sdktrace.WithSampler(sdktrace.ParentBased(sdktrace.TraceIDRatioBased(1))),
+		sdktrace.WithSampler(
+			sdktrace.ParentBased(sdktrace.TraceIDRatioBased(1)),
+		),
 	)
 }
 
-func newSpanExporter(ctx context.Context, endpoint string) (sdktrace.SpanExporter, error) {
+func newSpanExporter(
+	ctx context.Context,
+	endpoint string,
+) (sdktrace.SpanExporter, error) {
 	if endpoint == "" {
 		return stdouttrace.New()
 	}

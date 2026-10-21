@@ -24,16 +24,32 @@ const (
 func writeError(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, task.ErrInvalid):
-		writeJSONError(c, http.StatusBadRequest, codeInvalidRequest, detail(err, task.ErrInvalid))
+		writeJSONError(
+			c,
+			http.StatusBadRequest,
+			codeInvalidRequest,
+			detail(err, task.ErrInvalid),
+		)
 	case errors.Is(err, task.ErrNotFound):
 		writeJSONError(c, http.StatusNotFound, codeNotFound, "task not found")
 	case errors.Is(err, task.ErrConflict):
-		writeJSONError(c, http.StatusConflict, codeConflict, "task already exists")
+		writeJSONError(
+			c,
+			http.StatusConflict,
+			codeConflict,
+			"task already exists",
+		)
 	default:
 		// The request logger carries the request_id, so this line can be
 		// correlated with the access log and, later, the trace.
-		observability.LoggerFrom(c.Request.Context()).Error("unhandled error", "error", err)
-		writeJSONError(c, http.StatusInternalServerError, codeInternal, "internal server error")
+		observability.LoggerFrom(c.Request.Context()).
+			Error("unhandled error", "error", err)
+		writeJSONError(
+			c,
+			http.StatusInternalServerError,
+			codeInternal,
+			"internal server error",
+		)
 	}
 }
 

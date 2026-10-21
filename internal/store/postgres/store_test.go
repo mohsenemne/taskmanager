@@ -40,6 +40,7 @@ func (s *RepositorySuite) createTask(t task.Task) task.Task {
 
 	created, err := s.repo.Create(context.Background(), t)
 	s.Require().NoError(err)
+
 	return created
 }
 
@@ -95,6 +96,7 @@ func (s *RepositorySuite) TestListFiltersByStatus() {
 
 	s.Equal(2, total)
 	s.Require().Len(page, 2)
+
 	for _, item := range page {
 		s.Equal(task.StatusDone, item.Status)
 	}

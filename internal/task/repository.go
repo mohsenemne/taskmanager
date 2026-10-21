@@ -28,7 +28,7 @@ type Repository interface {
 	Create(ctx context.Context, t Task) (Task, error)
 	// Get returns the task with the given id, or ErrNotFound.
 	Get(ctx context.Context, id uuid.UUID) (Task, error)
-	// List returns one page of tasks matching f and the total number of matches.
+	// List returns one page of tasks matching f and the number of matches.
 	List(ctx context.Context, f Filter) (tasks []Task, total int, err error)
 	// Update replaces the mutable fields of t and returns the stored row.
 	Update(ctx context.Context, t Task) (Task, error)

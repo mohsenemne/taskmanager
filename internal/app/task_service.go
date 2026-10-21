@@ -39,9 +39,12 @@ func recordError(span trace.Span, err error) {
 	}
 
 	span.RecordError(err)
-	if errors.Is(err, task.ErrInvalid) || errors.Is(err, task.ErrNotFound) || errors.Is(err, task.ErrConflict) {
+
+	if errors.Is(err, task.ErrInvalid) || errors.Is(err, task.ErrNotFound) ||
+		errors.Is(err, task.ErrConflict) {
 		return
 	}
+
 	span.SetStatus(codes.Error, err.Error())
 }
 
@@ -57,7 +60,10 @@ func NewTaskService(repo task.Repository) *TaskService {
 }
 
 // Create validates in, applies defaults and stores it.
-func (s *TaskService) Create(ctx context.Context, in task.Task) (task.Task, error) {
+func (s *TaskService) Create(
+	ctx context.Context,
+	in task.Task,
+) (task.Task, error) {
 	ctx, span := startSpan(ctx, "task.create")
 	defer span.End()
 
@@ -65,6 +71,7 @@ func (s *TaskService) Create(ctx context.Context, in task.Task) (task.Task, erro
 	if in.Status == "" {
 		in.Status = task.StatusTodo
 	}
+
 	if err := validate(in); err != nil {
 		recordError(span, err)
 		return task.Task{}, err
@@ -77,17 +84,22 @@ func (s *TaskService) Create(ctx context.Context, in task.Task) (task.Task, erro
 	}
 
 	span.SetAttributes(attribute.String("task.id", created.ID.String()))
+
 	return created, nil
 }
 
 // Get returns a single task.
-func (s *TaskService) Get(ctx context.Context, id uuid.UUID) (task.Task, error) {
+func (s *TaskService) Get(
+	ctx context.Context,
+	id uuid.UUID,
+) (task.Task, error) {
 	ctx, span := startSpan(ctx, "task.get")
 	defer span.End()
 
 	if id == uuid.Nil {
 		err := fmt.Errorf("%w: id is required", task.ErrInvalid)
 		recordError(span, err)
+
 		return task.Task{}, err
 	}
 
@@ -98,17 +110,26 @@ func (s *TaskService) Get(ctx context.Context, id uuid.UUID) (task.Task, error) 
 	}
 
 	span.SetAttributes(attribute.String("task.id", found.ID.String()))
+
 	return found, nil
 }
 
 // List returns one page of tasks and the total number of matches.
-func (s *TaskService) List(ctx context.Context, f task.Filter) ([]task.Task, int, error) {
+func (s *TaskService) List(
+	ctx context.Context,
+	f task.Filter,
+) ([]task.Task, int, error) {
 	ctx, span := startSpan(ctx, "task.list")
 	defer span.End()
 
 	if f.Status != "" && !f.Status.Valid() {
-		err := fmt.Errorf("%w: status %q must be one of todo, in_progress or done", task.ErrInvalid, f.Status)
+		err := fmt.Errorf(
+			"%w: status %q must be one of todo, in_progress or done",
+			task.ErrInvalid,
+			f.Status,
+		)
 		recordError(span, err)
+
 		return nil, 0, err
 	}
 
@@ -118,6 +139,7 @@ func (s *TaskService) List(ctx context.Context, f task.Filter) ([]task.Task, int
 	case f.Limit > task.MaxPageSize:
 		f.Limit = task.MaxPageSize
 	}
+
 	if f.Offset < 0 {
 		f.Offset = 0
 	}
@@ -126,9 +148,11 @@ func (s *TaskService) List(ctx context.Context, f task.Filter) ([]task.Task, int
 		attribute.Int("page.limit", f.Limit),
 		attribute.Int("page.offset", f.Offset),
 	)
+
 	if f.Status != "" {
 		span.SetAttributes(attribute.String("filter.status", string(f.Status)))
 	}
+
 	if f.Assignee != nil {
 		span.SetAttributes(attribute.String("filter.assignee", *f.Assignee))
 	}
@@ -143,19 +167,25 @@ func (s *TaskService) List(ctx context.Context, f task.Filter) ([]task.Task, int
 		attribute.Int("result.count", len(items)),
 		attribute.Int("result.total", total),
 	)
+
 	return items, total, nil
 }
 
 // Update replaces the mutable fields of a task.
-func (s *TaskService) Update(ctx context.Context, in task.Task) (task.Task, error) {
+func (s *TaskService) Update(
+	ctx context.Context,
+	in task.Task,
+) (task.Task, error) {
 	ctx, span := startSpan(ctx, "task.update")
 	defer span.End()
 
 	if in.ID == uuid.Nil {
 		err := fmt.Errorf("%w: id is required", task.ErrInvalid)
 		recordError(span, err)
+
 		return task.Task{}, err
 	}
+
 	span.SetAttributes(attribute.String("task.id", in.ID.String()))
 
 	in = normalize(in)
@@ -169,6 +199,7 @@ func (s *TaskService) Update(ctx context.Context, in task.Task) (task.Task, erro
 		recordError(span, err)
 		return task.Task{}, err
 	}
+
 	return updated, nil
 }
 
@@ -180,14 +211,17 @@ func (s *TaskService) Delete(ctx context.Context, id uuid.UUID) error {
 	if id == uuid.Nil {
 		err := fmt.Errorf("%w: id is required", task.ErrInvalid)
 		recordError(span, err)
+
 		return err
 	}
+
 	span.SetAttributes(attribute.String("task.id", id.String()))
 
 	if err := s.repo.Delete(ctx, id); err != nil {
 		recordError(span, err)
 		return err
 	}
+
 	return nil
 }
 
@@ -216,11 +250,23 @@ func validate(t task.Task) error {
 	if t.Title == "" {
 		return fmt.Errorf("%w: title is required", task.ErrInvalid)
 	}
+
 	if n := utf8.RuneCountInString(t.Title); n > maxTitleLength {
-		return fmt.Errorf("%w: title must be at most %d characters, got %d", task.ErrInvalid, maxTitleLength, n)
+		return fmt.Errorf(
+			"%w: title must be at most %d characters, got %d",
+			task.ErrInvalid,
+			maxTitleLength,
+			n,
+		)
 	}
+
 	if !t.Status.Valid() {
-		return fmt.Errorf("%w: status %q must be one of todo, in_progress or done", task.ErrInvalid, t.Status)
+		return fmt.Errorf(
+			"%w: status %q must be one of todo, in_progress or done",
+			task.ErrInvalid,
+			t.Status,
+		)
 	}
+
 	return nil
 }

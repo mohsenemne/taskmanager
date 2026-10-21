@@ -38,18 +38,21 @@ func run(m *testing.M) int {
 
 	if dsn == "" {
 		var err error
+
 		dsn, stop, err = startPostgres(ctx)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "store: start postgres (set TEST_DATABASE_URL to reuse a local instance): %v\n", err)
 			return 1
 		}
 	}
+
 	defer stop()
 
 	if err := postgres.Migrate(ctx, dsn); err != nil {
 		fmt.Fprintf(os.Stderr, "store: apply migrations: %v\n", err)
 		return 1
 	}
+
 	testDSN = dsn
 
 	return m.Run()
@@ -89,6 +92,7 @@ func newPool(t *testing.T) *pgxpool.Pool {
 	t.Cleanup(pool.Close)
 
 	require.NoError(t, pool.Ping(context.Background()))
+
 	return pool
 }
 
@@ -109,6 +113,7 @@ func (s *HarnessSuite) SetupTest() {
 
 func (s *HarnessSuite) TestMigrationsAreApplied() {
 	var exists bool
+
 	err := s.pool.QueryRow(context.Background(), `
 		SELECT EXISTS (
 			SELECT 1 FROM information_schema.tables
@@ -129,14 +134,17 @@ func (s *HarnessSuite) TestFilterIndexesExist() {
 		WHERE schemaname = 'public' AND tablename = 'tasks'
 		ORDER BY indexname`)
 	s.Require().NoError(err)
+
 	defer rows.Close()
 
 	var names []string
+
 	for rows.Next() {
 		var name string
 		s.Require().NoError(rows.Scan(&name))
 		names = append(names, name)
 	}
+
 	s.Require().NoError(rows.Err())
 
 	for _, want := range []string{

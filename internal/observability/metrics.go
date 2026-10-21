@@ -36,7 +36,7 @@ func NewMetrics(version, environment string) *Metrics {
 
 		RequestsTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "http_requests_total",
-			Help: "Total number of HTTP requests by method, route and status code.",
+			Help: "Total HTTP requests by method, route and status code.",
 		}, []string{"method", "route", "status"}),
 
 		RequestDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
@@ -44,7 +44,18 @@ func NewMetrics(version, environment string) *Metrics {
 			Help: "HTTP request latency in seconds.",
 			// Tuned for a low-latency API: the defaults stop at 10s and are too
 			// coarse below 100ms, where this service actually lives.
-			Buckets: []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5},
+			Buckets: []float64{
+				0.005,
+				0.01,
+				0.025,
+				0.05,
+				0.1,
+				0.25,
+				0.5,
+				1,
+				2.5,
+				5,
+			},
 		}, []string{"method", "route"}),
 
 		RequestsInFlight: prometheus.NewGauge(prometheus.GaugeOpts{
@@ -80,7 +91,10 @@ func NewMetrics(version, environment string) *Metrics {
 // Handler serves the registry in the Prometheus text format. OpenMetrics is
 // enabled because exemplars, which carry the trace ID, are only rendered there.
 func (m *Metrics) Handler() http.Handler {
-	return promhttp.HandlerFor(m.Registry, promhttp.HandlerOpts{EnableOpenMetrics: true})
+	return promhttp.HandlerFor(
+		m.Registry,
+		promhttp.HandlerOpts{EnableOpenMetrics: true},
+	)
 }
 
 // PoolStats is a snapshot of the database connection pool.

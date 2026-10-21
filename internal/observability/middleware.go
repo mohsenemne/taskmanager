@@ -25,6 +25,7 @@ func LoggerFrom(ctx context.Context) *slog.Logger {
 	if logger, ok := ctx.Value(loggerKey{}).(*slog.Logger); ok {
 		return logger
 	}
+
 	return slog.Default()
 }
 
@@ -41,21 +42,27 @@ func RequestLogger(logger *slog.Logger) gin.HandlerFunc {
 		if requestID == "" {
 			requestID = uuid.NewString()
 		}
+
 		c.Header("X-Request-ID", requestID)
 
 		requestLogger := logger.With("request_id", requestID)
 		// otelgin runs before this middleware, so the span is already in the
 		// context. Carrying its identifiers makes the log line resolvable in
 		// the trace UI.
-		if spanContext := trace.SpanContextFromContext(c.Request.Context()); spanContext.IsValid() {
+		spanContext := trace.SpanContextFromContext(c.Request.Context())
+		if spanContext.IsValid() {
 			requestLogger = requestLogger.With(
 				"trace_id", spanContext.TraceID().String(),
 				"span_id", spanContext.SpanID().String(),
 			)
 		}
-		c.Request = c.Request.WithContext(WithLogger(c.Request.Context(), requestLogger))
+
+		c.Request = c.Request.WithContext(
+			WithLogger(c.Request.Context(), requestLogger),
+		)
 
 		start := time.Now()
+
 		c.Next()
 
 		route := c.FullPath()
@@ -88,6 +95,7 @@ func RequestLogger(logger *slog.Logger) gin.HandlerFunc {
 func (m *Metrics) Middleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		start := time.Now()
+
 		m.RequestsInFlight.Inc()
 		defer m.RequestsInFlight.Dec()
 
@@ -99,6 +107,7 @@ func (m *Metrics) Middleware() gin.HandlerFunc {
 			// label value and blow up cardinality.
 			route = "unmatched"
 		}
+
 		status := strconv.Itoa(c.Writer.Status())
 
 		m.RequestsTotal.WithLabelValues(c.Request.Method, route, status).Inc()
@@ -109,14 +118,18 @@ func (m *Metrics) Middleware() gin.HandlerFunc {
 		// An exemplar attaches the trace that produced this observation to the
 		// histogram bucket, so a slow bucket in Grafana can be opened directly
 		// in the trace UI instead of searched for.
-		if spanContext := trace.SpanContextFromContext(c.Request.Context()); spanContext.IsValid() {
-			if exemplarObserver, ok := observer.(prometheus.ExemplarObserver); ok {
+		spanContext := trace.SpanContextFromContext(c.Request.Context())
+		if spanContext.IsValid() {
+			exemplarObserver, ok := observer.(prometheus.ExemplarObserver)
+			if ok {
 				exemplarObserver.ObserveWithExemplar(elapsed, prometheus.Labels{
 					"trace_id": spanContext.TraceID().String(),
 				})
+
 				return
 			}
 		}
+
 		observer.Observe(elapsed)
 	}
 }

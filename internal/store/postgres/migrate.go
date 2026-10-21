@@ -18,7 +18,7 @@ import (
 
 // Migrate applies every pending migration to the database at dsn.
 // It is safe to call on every start: an up-to-date schema is a no-op.
-func Migrate(ctx context.Context, dsn string) error {
+func Migrate(_ context.Context, dsn string) error {
 	source, err := iofs.New(migrations.FS, ".")
 	if err != nil {
 		return fmt.Errorf("load migrations: %w", err)
@@ -45,5 +45,6 @@ func Migrate(ctx context.Context, dsn string) error {
 	if err := m.Up(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
 		return fmt.Errorf("apply migrations: %w", err)
 	}
+
 	return nil
 }

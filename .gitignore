@@ -19,3 +19,5 @@ coverage.html
 
 # Local docker buildx state
 .docker/
+# Local tool caches
+.cache/

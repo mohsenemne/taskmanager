@@ -32,6 +32,7 @@ func TestRequestLoggerCarriesTraceAndSpanIDs(t *testing.T) {
 	t.Cleanup(func() { _ = provider.Shutdown(context.Background()) })
 
 	var buf bytes.Buffer
+
 	logger := slog.New(slog.NewJSONHandler(&buf, nil))
 
 	// otelgin must run first so the span exists before the logger is scoped.

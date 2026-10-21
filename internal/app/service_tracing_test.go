@@ -39,6 +39,7 @@ func spanAttributes(span tracetest.SpanStub) map[string]string {
 	for _, attr := range span.Attributes {
 		attrs[string(attr.Key)] = fmt.Sprintf("%v", attr.Value.AsInterface())
 	}
+
 	return attrs
 }
 

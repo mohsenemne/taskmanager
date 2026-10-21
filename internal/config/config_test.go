@@ -177,6 +177,7 @@ func (s *ConfigSuite) TestLoadRejectsInvalidValues() {
 
 			_, err := Load()
 			s.Require().Error(err)
+
 			for _, want := range tt.wantErrors {
 				s.ErrorContains(err, want)
 			}

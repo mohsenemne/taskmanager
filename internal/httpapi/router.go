@@ -17,7 +17,11 @@ type Pinger interface {
 // NewRouter builds the HTTP surface: the versioned task API plus the liveness
 // and readiness probes. Middleware is installed before any route so it also
 // covers endpoints the caller mounts afterwards.
-func NewRouter(svc TaskService, db Pinger, middleware ...gin.HandlerFunc) *gin.Engine {
+func NewRouter(
+	svc TaskService,
+	db Pinger,
+	middleware ...gin.HandlerFunc,
+) *gin.Engine {
 	// Reject unknown JSON fields on every request.
 	binding.EnableDecoderDisallowUnknownFields = true
 
@@ -43,6 +47,7 @@ func NewRouter(svc TaskService, db Pinger, middleware ...gin.HandlerFunc) *gin.E
 			c.String(http.StatusServiceUnavailable, "not ready\n")
 			return
 		}
+
 		c.String(http.StatusOK, "ok\n")
 	})
 

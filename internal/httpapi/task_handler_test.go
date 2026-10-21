@@ -61,6 +61,7 @@ func (s *HandlerSuite) do(method, target, body string) *httptest.ResponseRecorde
 
 	rec := httptest.NewRecorder()
 	s.router.ServeHTTP(rec, req)
+
 	return rec
 }
 

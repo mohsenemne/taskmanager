@@ -74,6 +74,7 @@ type ListResponse struct {
 	Page  PageMeta       `json:"page"`
 }
 
+// PageMeta describes where a page sits within the full result set.
 type PageMeta struct {
 	Total  int `json:"total"`
 	Limit  int `json:"limit"`
@@ -85,6 +86,7 @@ type ErrorResponse struct {
 	Error ErrorDetail `json:"error"`
 }
 
+// ErrorDetail is the machine-readable code and human message of an error.
 type ErrorDetail struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`

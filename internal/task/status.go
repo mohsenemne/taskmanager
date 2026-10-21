@@ -27,7 +27,12 @@ func (s Status) Valid() bool {
 func ParseStatus(raw string) (Status, error) {
 	s := Status(raw)
 	if !s.Valid() {
-		return "", fmt.Errorf("%w: status %q must be one of todo, in_progress or done", ErrInvalid, raw)
+		return "", fmt.Errorf(
+			"%w: status %q must be one of todo, in_progress or done",
+			ErrInvalid,
+			raw,
+		)
 	}
+
 	return s, nil
 }

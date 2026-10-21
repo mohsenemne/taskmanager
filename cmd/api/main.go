@@ -62,71 +62,138 @@ func run() error {
 	logger := observability.NewLogger(cfg.LogLevel)
 	slog.SetDefault(logger)
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	ctx, stop := signal.NotifyContext(
+		context.Background(),
+		os.Interrupt,
+		syscall.SIGTERM,
+	)
 	defer stop()
 
-	tracerProvider, err := observability.NewTracerProvider(ctx, observability.TracingInfo{
-		ServiceName: serviceName,
-		Version:     version,
-		Environment: cfg.Env,
-		Endpoint:    cfg.TraceEndpoint,
-	})
+	stopTracing, err := setupTracing(ctx, cfg)
 	if err != nil {
-		return fmt.Errorf("init tracing: %w", err)
+		return err
 	}
-	defer func() {
-		// Without this, spans buffered by the batch processor are dropped on
-		// shutdown.
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if err := tracerProvider.Shutdown(shutdownCtx); err != nil {
-			logger.Error("shutdown tracing", "error", err)
-		}
-	}()
+	defer stopTracing()
 
-	poolConfig, err := pgxpool.ParseConfig(cfg.DatabaseURL)
+	pool, err := setupPool(ctx, cfg, logger)
 	if err != nil {
-		return fmt.Errorf("parse database url: %w", err)
-	}
-	// Every query becomes a child span of the request that triggered it.
-	poolConfig.ConnConfig.Tracer = otelpgx.NewTracer()
-
-	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
-	if err != nil {
-		return fmt.Errorf("create connection pool: %w", err)
+		return err
 	}
 	defer pool.Close()
-
-	if err := pool.Ping(ctx); err != nil {
-		return fmt.Errorf("ping database: %w", err)
-	}
-	// Log where we connected, never the DSN: it carries the password.
-	if u, err := url.Parse(cfg.DatabaseURL); err == nil {
-		logger.Info("database connected", "host", u.Host, "database", strings.TrimPrefix(u.Path, "/"))
-	}
 
 	if err := postgres.Migrate(ctx, cfg.DatabaseURL); err != nil {
 		return fmt.Errorf("migrate database: %w", err)
 	}
+
 	logger.Info("migrations applied")
 
+	gin.SetMode(gin.ReleaseMode)
+
+	srv := newServer(ctx, cfg, pool, logger)
+
+	return serve(ctx, srv, cfg, logger)
+}
+
+// setupTracing installs the global tracer provider and returns the function
+// that flushes it on shutdown.
+func setupTracing(ctx context.Context, cfg config.Config) (func(), error) {
+	provider, err := observability.NewTracerProvider(
+		ctx,
+		observability.TracingInfo{
+			ServiceName: serviceName,
+			Version:     version,
+			Environment: cfg.Env,
+			Endpoint:    cfg.TraceEndpoint,
+		},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("init tracing: %w", err)
+	}
+
+	return func() {
+		// Without this, spans buffered by the batch processor are dropped on
+		// shutdown.
+		shutdownCtx, cancel := context.WithTimeout(
+			context.Background(),
+			5*time.Second,
+		)
+		defer cancel()
+
+		if err := provider.Shutdown(shutdownCtx); err != nil {
+			slog.Error("shutdown tracing", "error", err)
+		}
+	}, nil
+}
+
+// setupPool connects to PostgreSQL and attaches the query tracer so every
+// statement becomes a child of the span that triggered it.
+func setupPool(
+	ctx context.Context,
+	cfg config.Config,
+	logger *slog.Logger,
+) (*pgxpool.Pool, error) {
+	poolConfig, err := pgxpool.ParseConfig(cfg.DatabaseURL)
+	if err != nil {
+		return nil, fmt.Errorf("parse database url: %w", err)
+	}
+
+	poolConfig.ConnConfig.Tracer = otelpgx.NewTracer()
+
+	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
+	if err != nil {
+		return nil, fmt.Errorf("create connection pool: %w", err)
+	}
+
+	if err := pool.Ping(ctx); err != nil {
+		return nil, fmt.Errorf("ping database: %w", err)
+	}
+
+	// Log where we connected, never the DSN: it carries the password.
+	if u, err := url.Parse(cfg.DatabaseURL); err == nil {
+		logger.Info(
+			"database connected",
+			"host", u.Host,
+			"database", strings.TrimPrefix(u.Path, "/"),
+		)
+	}
+
+	return pool, nil
+}
+
+// newServer wires the HTTP surface, its middleware, the operational endpoints
+// and the metrics registry.
+func newServer(
+	ctx context.Context,
+	cfg config.Config,
+	pool *pgxpool.Pool,
+	logger *slog.Logger,
+) *http.Server {
 	store := postgres.New(pool)
 	svc := app.NewTaskService(store)
 
 	metrics := observability.NewMetrics(version, cfg.Env)
-	observability.RegisterPoolMetrics(metrics.Registry, func() observability.PoolStats {
+	poolStats := func() observability.PoolStats {
 		stat := pool.Stat()
+
 		return observability.PoolStats{
 			Acquired: stat.AcquiredConns(),
 			Idle:     stat.IdleConns(),
 			Total:    stat.TotalConns(),
 			Max:      stat.MaxConns(),
 		}
-	})
-	observability.StartTaskCount(ctx, taskCountInterval, store.CountTasks, metrics.TasksCount, logger)
+	}
+	observability.RegisterPoolMetrics(metrics.Registry, poolStats)
+	observability.StartTaskCount(
+		ctx,
+		taskCountInterval,
+		store.CountTasks,
+		metrics.TasksCount,
+		logger,
+	)
 
-	gin.SetMode(gin.ReleaseMode)
-	router := httpapi.NewRouter(svc, pool,
+	router := httpapi.NewRouter(
+		svc,
+		pool,
 		otelgin.Middleware(serviceName),
 		observability.RequestLogger(logger),
 		metrics.Middleware(),
@@ -137,7 +204,7 @@ func run() error {
 	// is generated from handler annotations by `make swag`.
 	router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 
-	srv := &http.Server{
+	return &http.Server{
 		Addr:              cfg.HTTPAddr,
 		Handler:           router,
 		ReadHeaderTimeout: cfg.ReadHeaderTimeout,
@@ -145,14 +212,26 @@ func run() error {
 		WriteTimeout:      cfg.WriteTimeout,
 		IdleTimeout:       cfg.IdleTimeout,
 	}
+}
 
+// serve runs the server until the context is cancelled, then drains in-flight
+// requests within the configured budget.
+func serve(
+	ctx context.Context,
+	srv *http.Server,
+	cfg config.Config,
+	logger *slog.Logger,
+) error {
 	serveErr := make(chan error, 1)
+
 	go func() {
-		logger.Info("http server listening",
+		logger.Info(
+			"http server listening",
 			"addr", cfg.HTTPAddr,
 			"env", cfg.Env,
 			"version", version,
 		)
+
 		serveErr <- srv.ListenAndServe()
 	}()
 
@@ -161,19 +240,28 @@ func run() error {
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			return fmt.Errorf("serve: %w", err)
 		}
+
 		return nil
 	case <-ctx.Done():
 		logger.Info("shutdown requested")
 	}
 
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
+	shutdownCtx, cancel := context.WithTimeout(
+		context.Background(),
+		cfg.ShutdownTimeout,
+	)
 	defer cancel()
 
 	start := time.Now()
+
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		return fmt.Errorf("shutdown: %w", err)
 	}
 
-	logger.Info("shutdown complete", "duration_ms", float64(time.Since(start).Microseconds())/1000)
+	logger.Info(
+		"shutdown complete",
+		"duration_ms", float64(time.Since(start).Microseconds())/1000,
+	)
+
 	return nil
 }

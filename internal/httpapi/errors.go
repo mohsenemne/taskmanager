@@ -42,8 +42,8 @@ func writeBadRequest(c *gin.Context, message string) {
 }
 
 func writeJSONError(c *gin.Context, status int, code, message string) {
-	c.AbortWithStatusJSON(status, errorResponse{
-		Error: errorDetail{Code: code, Message: message},
+	c.AbortWithStatusJSON(status, ErrorResponse{
+		Error: ErrorDetail{Code: code, Message: message},
 	})
 }
 

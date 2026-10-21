@@ -35,8 +35,22 @@ func newTaskHandler(svc TaskService) *taskHandler {
 	return &taskHandler{svc: svc}
 }
 
+// create handles POST /api/v1/tasks.
+//
+// @Summary      Create a task
+// @Description  Creates a task and returns it with its server-assigned identity.
+// @Tags         tasks
+// @Accept       json
+// @Produce      json
+// @Param        task  body      CreateTaskRequest  true  "Task to create"
+// @Success      201   {object}  TaskResponse
+// @Failure      400   {object}  ErrorResponse
+// @Failure      409   {object}  ErrorResponse
+// @Failure      500   {object}  ErrorResponse
+// @Header       201   {string}  Location  "URL of the created task"
+// @Router       /tasks [post]
 func (h *taskHandler) create(c *gin.Context) {
-	var req createTaskRequest
+	var req CreateTaskRequest
 	if err := bindJSON(c, &req); err != nil {
 		writeBadRequest(c, err.Error())
 		return
@@ -52,6 +66,17 @@ func (h *taskHandler) create(c *gin.Context) {
 	c.JSON(http.StatusCreated, newTaskResponse(created))
 }
 
+// get handles GET /api/v1/tasks/{id}.
+//
+// @Summary      Get a task
+// @Tags         tasks
+// @Produce      json
+// @Param        id   path      string  true  "Task ID"  format(uuid)
+// @Success      200  {object}  TaskResponse
+// @Failure      400  {object}  ErrorResponse
+// @Failure      404  {object}  ErrorResponse
+// @Failure      500  {object}  ErrorResponse
+// @Router       /tasks/{id} [get]
 func (h *taskHandler) get(c *gin.Context) {
 	id, ok := taskID(c)
 	if !ok {
@@ -67,6 +92,20 @@ func (h *taskHandler) get(c *gin.Context) {
 	c.JSON(http.StatusOK, newTaskResponse(found))
 }
 
+// list handles GET /api/v1/tasks.
+//
+// @Summary      List tasks
+// @Description  Returns one page of tasks and the total number of matches.
+// @Tags         tasks
+// @Produce      json
+// @Param        status    query     string  false  "Filter by status"  Enums(todo, in_progress, done)
+// @Param        assignee  query     string  false  "Filter by assignee"
+// @Param        limit     query     int     false  "Page size"  default(20)  minimum(1)  maximum(100)
+// @Param        offset    query     int     false  "Offset"     default(0)   minimum(0)
+// @Success      200       {object}  ListResponse
+// @Failure      400       {object}  ErrorResponse
+// @Failure      500       {object}  ErrorResponse
+// @Router       /tasks [get]
 func (h *taskHandler) list(c *gin.Context) {
 	filter, err := parseFilter(c)
 	if err != nil {
@@ -80,9 +119,9 @@ func (h *taskHandler) list(c *gin.Context) {
 		return
 	}
 
-	resp := listResponse{
-		Items: make([]taskResponse, 0, len(items)),
-		Page:  pageMeta{Total: total, Limit: filter.Limit, Offset: filter.Offset},
+	resp := ListResponse{
+		Items: make([]TaskResponse, 0, len(items)),
+		Page:  PageMeta{Total: total, Limit: filter.Limit, Offset: filter.Offset},
 	}
 	for _, item := range items {
 		resp.Items = append(resp.Items, newTaskResponse(item))
@@ -91,13 +130,27 @@ func (h *taskHandler) list(c *gin.Context) {
 	c.JSON(http.StatusOK, resp)
 }
 
+// update handles PUT /api/v1/tasks/{id}.
+//
+// @Summary      Replace a task
+// @Description  Replaces the mutable fields of a task; every field is expected.
+// @Tags         tasks
+// @Accept       json
+// @Produce      json
+// @Param        id    path      string             true  "Task ID"  format(uuid)
+// @Param        task  body      UpdateTaskRequest  true  "New task state"
+// @Success      200   {object}  TaskResponse
+// @Failure      400   {object}  ErrorResponse
+// @Failure      404   {object}  ErrorResponse
+// @Failure      500   {object}  ErrorResponse
+// @Router       /tasks/{id} [put]
 func (h *taskHandler) update(c *gin.Context) {
 	id, ok := taskID(c)
 	if !ok {
 		return
 	}
 
-	var req updateTaskRequest
+	var req UpdateTaskRequest
 	if err := bindJSON(c, &req); err != nil {
 		writeBadRequest(c, err.Error())
 		return
@@ -112,6 +165,16 @@ func (h *taskHandler) update(c *gin.Context) {
 	c.JSON(http.StatusOK, newTaskResponse(updated))
 }
 
+// delete handles DELETE /api/v1/tasks/{id}.
+//
+// @Summary      Delete a task
+// @Tags         tasks
+// @Param        id   path  string  true  "Task ID"  format(uuid)
+// @Success      204  "No Content"
+// @Failure      400  {object}  ErrorResponse
+// @Failure      404  {object}  ErrorResponse
+// @Failure      500  {object}  ErrorResponse
+// @Router       /tasks/{id} [delete]
 func (h *taskHandler) delete(c *gin.Context) {
 	id, ok := taskID(c)
 	if !ok {

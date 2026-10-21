@@ -8,15 +8,15 @@ import (
 	"github.com/mohsenemne/taskmanager/internal/task"
 )
 
-// createTaskRequest is the body of POST /api/v1/tasks.
-type createTaskRequest struct {
+// CreateTaskRequest is the body of POST /api/v1/tasks.
+type CreateTaskRequest struct {
 	Title       string  `json:"title"`
 	Description string  `json:"description"`
 	Status      string  `json:"status"`
 	Assignee    *string `json:"assignee"`
 }
 
-func (r createTaskRequest) toTask() task.Task {
+func (r CreateTaskRequest) toTask() task.Task {
 	return task.Task{
 		Title:       r.Title,
 		Description: r.Description,
@@ -25,16 +25,16 @@ func (r createTaskRequest) toTask() task.Task {
 	}
 }
 
-// updateTaskRequest is the body of PUT /api/v1/tasks/{id}. PUT replaces the
+// UpdateTaskRequest is the body of PUT /api/v1/tasks/{id}. PUT replaces the
 // mutable fields, so every field is expected on the wire.
-type updateTaskRequest struct {
+type UpdateTaskRequest struct {
 	Title       string  `json:"title"`
 	Description string  `json:"description"`
 	Status      string  `json:"status"`
 	Assignee    *string `json:"assignee"`
 }
 
-func (r updateTaskRequest) toTask(id uuid.UUID) task.Task {
+func (r UpdateTaskRequest) toTask(id uuid.UUID) task.Task {
 	return task.Task{
 		ID:          id,
 		Title:       r.Title,
@@ -44,8 +44,8 @@ func (r updateTaskRequest) toTask(id uuid.UUID) task.Task {
 	}
 }
 
-// taskResponse is the representation of a task on the wire.
-type taskResponse struct {
+// TaskResponse is the representation of a task on the wire.
+type TaskResponse struct {
 	ID          uuid.UUID `json:"id"`
 	Title       string    `json:"title"`
 	Description string    `json:"description"`
@@ -55,8 +55,8 @@ type taskResponse struct {
 	UpdatedAt   time.Time `json:"updated_at"`
 }
 
-func newTaskResponse(t task.Task) taskResponse {
-	return taskResponse{
+func newTaskResponse(t task.Task) TaskResponse {
+	return TaskResponse{
 		ID:          t.ID,
 		Title:       t.Title,
 		Description: t.Description,
@@ -67,25 +67,25 @@ func newTaskResponse(t task.Task) taskResponse {
 	}
 }
 
-// listResponse carries one page of tasks plus the paging metadata needed to
+// ListResponse carries one page of tasks plus the paging metadata needed to
 // walk the rest of the collection.
-type listResponse struct {
-	Items []taskResponse `json:"items"`
-	Page  pageMeta       `json:"page"`
+type ListResponse struct {
+	Items []TaskResponse `json:"items"`
+	Page  PageMeta       `json:"page"`
 }
 
-type pageMeta struct {
+type PageMeta struct {
 	Total  int `json:"total"`
 	Limit  int `json:"limit"`
 	Offset int `json:"offset"`
 }
 
-// errorResponse is the single error shape every endpoint returns.
-type errorResponse struct {
-	Error errorDetail `json:"error"`
+// ErrorResponse is the single error shape every endpoint returns.
+type ErrorResponse struct {
+	Error ErrorDetail `json:"error"`
 }
 
-type errorDetail struct {
+type ErrorDetail struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
 }

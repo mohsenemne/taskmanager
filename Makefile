@@ -5,7 +5,7 @@ VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 # Generated mocks are not application code, so they are excluded from coverage.
 COVERPKG := $(shell go list ./internal/... | grep -v /mocks | paste -sd, -)
 
-.PHONY: help env build run test test-integration test-all cover vet fmt lint mocks tidy clean
+.PHONY: help env build run test test-integration test-all cover vet fmt lint mocks swag tidy clean
 
 help: ## Show the available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -52,6 +52,9 @@ lint: ## Run golangci-lint when installed, otherwise fall back to go vet
 
 mocks: ## Regenerate the mocks from the interfaces (mockery)
 	go tool mockery
+
+swag: ## Regenerate the OpenAPI spec and Swagger docs from handler annotations
+	go tool swag init -g cmd/api/main.go -o api/docs --parseInternal
 
 tidy: ## Tidy go.mod and go.sum
 	go mod tidy

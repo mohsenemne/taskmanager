@@ -2,12 +2,12 @@ SHELL   := /bin/bash
 BINARY  := bin/api
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 
-.PHONY: help env build run test cover vet fmt lint tidy clean
+.PHONY: help env build run test test-integration test-all cover vet fmt lint tidy clean
 
 help: ## Show the available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
 		| sort \
-		| awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
+		| awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
 
 env: ## Create .env from .env.example when it does not exist yet
 	@test -f .env || cp .env.example .env
@@ -20,10 +20,16 @@ build: ## Compile the API binary into bin/
 run: ## Run the API locally, loading .env when present
 	@set -a; [ -f .env ] && . ./.env; set +a; go run ./cmd/api
 
-test: ## Run unit tests with the race detector
+test: ## Run the fast unit tests (no Docker required)
+	go test -race -count=1 -short ./...
+
+test-integration: ## Run the Docker-backed integration tests
+	go test -race -count=1 ./internal/store/...
+
+test-all: ## Run unit and integration tests
 	go test -race -count=1 ./...
 
-cover: ## Run tests and print the total coverage
+cover: ## Run every test and print the total coverage (needs Docker)
 	go test -race -count=1 -coverpkg=./internal/... -coverprofile=coverage.out ./...
 	@go tool cover -func=coverage.out | tail -n 1
 

@@ -16,3 +16,6 @@ coverage.html
 .DS_Store
 .idea/
 .vscode/
+
+# Local docker buildx state
+.docker/

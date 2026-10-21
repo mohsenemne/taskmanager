@@ -5,7 +5,7 @@ VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 # Generated mocks are not application code, so they are excluded from coverage.
 COVERPKG := $(shell go list ./internal/... | grep -v /mocks | paste -sd, -)
 
-.PHONY: help env build run test test-integration test-all cover vet fmt lint mocks swag tidy clean
+.PHONY: help env build run test test-integration test-all cover vet fmt lint mocks swag docker-build up down reset logs tidy clean
 
 help: ## Show the available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -55,6 +55,21 @@ mocks: ## Regenerate the mocks from the interfaces (mockery)
 
 swag: ## Regenerate the OpenAPI spec and Swagger docs from handler annotations
 	go tool swag init -g cmd/api/main.go -o api/docs --parseInternal
+
+docker-build: ## Build the API container image
+	docker build --build-arg VERSION=$(VERSION) -t taskmanager:$(VERSION) .
+
+up: ## Start the full stack with docker compose
+	docker compose up --build -d
+
+down: ## Stop the stack, keeping the database volume
+	docker compose down
+
+reset: ## Stop the stack and delete its volumes (destroys all data)
+	docker compose down -v
+
+logs: ## Follow the API logs from the stack
+	docker compose logs -f api
 
 tidy: ## Tidy go.mod and go.sum
 	go mod tidy

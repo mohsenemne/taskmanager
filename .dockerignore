@@ -1,0 +1,17 @@
+# Build artifacts and local state never belong in the image.
+.git
+.gitignore
+bin/
+coverage.out
+coverage.html
+*.md
+
+# Secrets and machine-specific configuration.
+.env
+.env.*
+
+# Compose and CI files are not part of the build.
+Dockerfile
+docker-compose.yml
+deploy/
+.github/

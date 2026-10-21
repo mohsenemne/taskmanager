@@ -8,6 +8,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/prometheus/client_golang/prometheus"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -101,6 +102,21 @@ func (m *Metrics) Middleware() gin.HandlerFunc {
 		status := strconv.Itoa(c.Writer.Status())
 
 		m.RequestsTotal.WithLabelValues(c.Request.Method, route, status).Inc()
-		m.RequestDuration.WithLabelValues(c.Request.Method, route).Observe(time.Since(start).Seconds())
+
+		elapsed := time.Since(start).Seconds()
+		observer := m.RequestDuration.WithLabelValues(c.Request.Method, route)
+
+		// An exemplar attaches the trace that produced this observation to the
+		// histogram bucket, so a slow bucket in Grafana can be opened directly
+		// in the trace UI instead of searched for.
+		if spanContext := trace.SpanContextFromContext(c.Request.Context()); spanContext.IsValid() {
+			if exemplarObserver, ok := observer.(prometheus.ExemplarObserver); ok {
+				exemplarObserver.ObserveWithExemplar(elapsed, prometheus.Labels{
+					"trace_id": spanContext.TraceID().String(),
+				})
+				return
+			}
+		}
+		observer.Observe(elapsed)
 	}
 }

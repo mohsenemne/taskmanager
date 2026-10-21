@@ -2,6 +2,7 @@ package observability_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -12,6 +13,10 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
+	"go.opentelemetry.io/otel"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
 	"github.com/mohsenemne/taskmanager/internal/observability"
 )
@@ -93,4 +98,45 @@ func TestRequestLoggerReusesIncomingRequestID(t *testing.T) {
 	router.ServeHTTP(rec, req)
 
 	require.Equal(t, "caller-supplied-id", rec.Header().Get("X-Request-ID"))
+}
+
+// TestMiddlewareAttachesTraceExemplar proves the latency histogram is linked to
+// the trace that produced it, which is what lets a dashboard jump from a slow
+// bucket straight to the request.
+func TestMiddlewareAttachesTraceExemplar(t *testing.T) {
+	exporter := tracetest.NewInMemoryExporter()
+	provider := sdktrace.NewTracerProvider(
+		sdktrace.WithSyncer(exporter),
+		sdktrace.WithSampler(sdktrace.AlwaysSample()),
+	)
+	otel.SetTracerProvider(provider)
+	t.Cleanup(func() { _ = provider.Shutdown(context.Background()) })
+
+	metrics := observability.NewMetrics("test", "test")
+	router := newTestRouter(
+		otelgin.Middleware("test-service"),
+		metrics.Middleware(),
+	)
+	router.GET("/ping", func(c *gin.Context) { c.Status(http.StatusOK) })
+
+	router.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/ping", nil))
+
+	families, err := metrics.Registry.Gather()
+	require.NoError(t, err)
+
+	var found int
+	for _, family := range families {
+		if family.GetName() != "http_request_duration_seconds" {
+			continue
+		}
+		for _, metric := range family.GetMetric() {
+			for _, bucket := range metric.GetHistogram().GetBucket() {
+				if bucket.GetExemplar() != nil {
+					found++
+				}
+			}
+		}
+	}
+
+	require.Positive(t, found, "the histogram should carry an exemplar with the trace id")
 }

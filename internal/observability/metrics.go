@@ -77,9 +77,10 @@ func NewMetrics(version, environment string) *Metrics {
 	return m
 }
 
-// Handler serves the registry in the Prometheus text format.
+// Handler serves the registry in the Prometheus text format. OpenMetrics is
+// enabled because exemplars, which carry the trace ID, are only rendered there.
 func (m *Metrics) Handler() http.Handler {
-	return promhttp.HandlerFor(m.Registry, promhttp.HandlerOpts{})
+	return promhttp.HandlerFor(m.Registry, promhttp.HandlerOpts{EnableOpenMetrics: true})
 }
 
 // PoolStats is a snapshot of the database connection pool.

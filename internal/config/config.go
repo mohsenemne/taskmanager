@@ -32,6 +32,9 @@ type Config struct {
 	LogLevel slog.Level
 	// DatabaseURL is the PostgreSQL connection string.
 	DatabaseURL string
+	// TraceEndpoint is an OTLP/HTTP collector address. Empty writes spans to
+	// stdout, which is enough for local development.
+	TraceEndpoint string
 	// ReadHeaderTimeout bounds how long a client may take to send request headers.
 	ReadHeaderTimeout time.Duration
 	// ReadTimeout bounds how long a client may take to send a full request.
@@ -55,6 +58,7 @@ func Load() (Config, error) {
 		HTTPAddr:          l.str("HTTP_ADDR", ":8080"),
 		LogLevel:          l.level("LOG_LEVEL", slog.LevelInfo),
 		DatabaseURL:       l.str("DATABASE_URL", ""),
+		TraceEndpoint:     l.str("OTEL_EXPORTER_OTLP_ENDPOINT", ""),
 		ReadHeaderTimeout: l.duration("READ_HEADER_TIMEOUT", 5*time.Second),
 		ReadTimeout:       l.duration("READ_TIMEOUT", 10*time.Second),
 		WriteTimeout:      l.duration("WRITE_TIMEOUT", 15*time.Second),

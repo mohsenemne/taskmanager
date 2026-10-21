@@ -8,6 +8,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"go.opentelemetry.io/otel/trace"
 )
 
 type loggerKey struct{}
@@ -42,6 +43,15 @@ func RequestLogger(logger *slog.Logger) gin.HandlerFunc {
 		c.Header("X-Request-ID", requestID)
 
 		requestLogger := logger.With("request_id", requestID)
+		// otelgin runs before this middleware, so the span is already in the
+		// context. Carrying its identifiers makes the log line resolvable in
+		// the trace UI.
+		if spanContext := trace.SpanContextFromContext(c.Request.Context()); spanContext.IsValid() {
+			requestLogger = requestLogger.With(
+				"trace_id", spanContext.TraceID().String(),
+				"span_id", spanContext.SpanID().String(),
+			)
+		}
 		c.Request = c.Request.WithContext(WithLogger(c.Request.Context(), requestLogger))
 
 		start := time.Now()

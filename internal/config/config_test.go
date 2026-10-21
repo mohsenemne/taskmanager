@@ -17,6 +17,7 @@ var envKeys = []string{
 	"HTTP_ADDR",
 	"LOG_LEVEL",
 	"DATABASE_URL",
+	"OTEL_EXPORTER_OTLP_ENDPOINT",
 	"READ_HEADER_TIMEOUT",
 	"READ_TIMEOUT",
 	"WRITE_TIMEOUT",
@@ -50,6 +51,7 @@ func (s *ConfigSuite) TestLoadDefaults() {
 	s.Equal(":8080", cfg.HTTPAddr)
 	s.Equal(slog.LevelInfo, cfg.LogLevel)
 	s.Equal(testDatabaseURL, cfg.DatabaseURL)
+	s.Empty(cfg.TraceEndpoint, "spans go to stdout unless a collector is configured")
 	s.Equal(5*time.Second, cfg.ReadHeaderTimeout)
 	s.Equal(10*time.Second, cfg.ReadTimeout)
 	s.Equal(15*time.Second, cfg.WriteTimeout)

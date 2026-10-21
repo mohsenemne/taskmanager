@@ -2,13 +2,22 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 
+	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/mohsenemne/taskmanager/internal/app"
 	"github.com/mohsenemne/taskmanager/internal/config"
+	"github.com/mohsenemne/taskmanager/internal/httpapi"
+	"github.com/mohsenemne/taskmanager/internal/store/postgres"
 )
 
 // version is set at build time:
@@ -34,26 +43,62 @@ func run() error {
 	}))
 	slog.SetDefault(logger)
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("ok\n"))
-	})
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	pool, err := pgxpool.New(ctx, cfg.DatabaseURL)
+	if err != nil {
+		return fmt.Errorf("create connection pool: %w", err)
+	}
+	defer pool.Close()
+
+	if err := pool.Ping(ctx); err != nil {
+		return fmt.Errorf("ping database: %w", err)
+	}
+
+	if err := postgres.Migrate(ctx, cfg.DatabaseURL); err != nil {
+		return fmt.Errorf("migrate database: %w", err)
+	}
+
+	gin.SetMode(gin.ReleaseMode)
+	router := httpapi.NewRouter(app.NewTaskService(postgres.New(pool)), pool)
 
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
-		Handler:           mux,
+		Handler:           router,
 		ReadHeaderTimeout: cfg.ReadHeaderTimeout,
+		ReadTimeout:       cfg.ReadTimeout,
+		WriteTimeout:      cfg.WriteTimeout,
+		IdleTimeout:       cfg.IdleTimeout,
 	}
 
-	logger.Info("http server listening",
-		"addr", cfg.HTTPAddr,
-		"env", cfg.Env,
-		"version", version,
-	)
+	serveErr := make(chan error, 1)
+	go func() {
+		logger.Info("http server listening",
+			"addr", cfg.HTTPAddr,
+			"env", cfg.Env,
+			"version", version,
+		)
+		serveErr <- srv.ListenAndServe()
+	}()
 
-	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		return fmt.Errorf("serve: %w", err)
+	select {
+	case err := <-serveErr:
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			return fmt.Errorf("serve: %w", err)
+		}
+		return nil
+	case <-ctx.Done():
+		logger.Info("shutdown requested")
 	}
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
+	defer cancel()
+
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		return fmt.Errorf("shutdown: %w", err)
+	}
+
+	logger.Info("shutdown complete")
 	return nil
 }

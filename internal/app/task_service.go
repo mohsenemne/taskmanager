@@ -15,10 +15,6 @@ import (
 const (
 	// maxTitleLength mirrors the CHECK constraint on tasks.title.
 	maxTitleLength = 200
-	// defaultPageSize applies when a listing does not ask for a page size.
-	defaultPageSize = 20
-	// maxPageSize caps a single listing, whatever the caller asks for.
-	maxPageSize = 100
 )
 
 // TaskService applies the task rules on top of a task.Repository. It is the
@@ -60,9 +56,9 @@ func (s *TaskService) List(ctx context.Context, f task.Filter) ([]task.Task, int
 
 	switch {
 	case f.Limit <= 0:
-		f.Limit = defaultPageSize
-	case f.Limit > maxPageSize:
-		f.Limit = maxPageSize
+		f.Limit = task.DefaultPageSize
+	case f.Limit > task.MaxPageSize:
+		f.Limit = task.MaxPageSize
 	}
 	if f.Offset < 0 {
 		f.Offset = 0

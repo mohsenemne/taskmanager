@@ -135,7 +135,7 @@ func (s *TaskServiceSuite) TestGetPropagatesNotFound() {
 
 func (s *TaskServiceSuite) TestListAppliesDefaults() {
 	s.repo.EXPECT().
-		List(mock.Anything, task.Filter{Limit: defaultPageSize, Offset: 0}).
+		List(mock.Anything, task.Filter{Limit: task.DefaultPageSize, Offset: 0}).
 		Return([]task.Task{}, 0, nil)
 
 	_, _, err := s.svc.List(context.Background(), task.Filter{})
@@ -144,7 +144,7 @@ func (s *TaskServiceSuite) TestListAppliesDefaults() {
 
 func (s *TaskServiceSuite) TestListClampsNegativeOffset() {
 	s.repo.EXPECT().
-		List(mock.Anything, task.Filter{Limit: defaultPageSize, Offset: 0}).
+		List(mock.Anything, task.Filter{Limit: task.DefaultPageSize, Offset: 0}).
 		Return([]task.Task{}, 0, nil)
 
 	_, _, err := s.svc.List(context.Background(), task.Filter{Offset: -5})
@@ -153,7 +153,7 @@ func (s *TaskServiceSuite) TestListClampsNegativeOffset() {
 
 func (s *TaskServiceSuite) TestListCapsPageSize() {
 	s.repo.EXPECT().
-		List(mock.Anything, task.Filter{Limit: maxPageSize, Offset: 0}).
+		List(mock.Anything, task.Filter{Limit: task.MaxPageSize, Offset: 0}).
 		Return([]task.Task{}, 0, nil)
 
 	_, _, err := s.svc.List(context.Background(), task.Filter{Limit: 500})

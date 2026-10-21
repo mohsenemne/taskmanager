@@ -6,6 +6,13 @@ import (
 	"github.com/google/uuid"
 )
 
+// Pagination policy shared by the service and the HTTP layer, so both agree on
+// what an absent or oversized page means.
+const (
+	DefaultPageSize = 20
+	MaxPageSize     = 100
+)
+
 // Filter narrows a task listing. Zero values mean "no filter".
 type Filter struct {
 	Status   Status

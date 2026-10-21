@@ -30,23 +30,35 @@ type Config struct {
 	HTTPAddr string
 	// LogLevel is the minimum level the logger emits.
 	LogLevel slog.Level
+	// DatabaseURL is the PostgreSQL connection string.
+	DatabaseURL string
 	// ReadHeaderTimeout bounds how long a client may take to send request headers.
 	ReadHeaderTimeout time.Duration
+	// ReadTimeout bounds how long a client may take to send a full request.
+	ReadTimeout time.Duration
+	// WriteTimeout bounds how long a response may take to be written.
+	WriteTimeout time.Duration
+	// IdleTimeout bounds how long an idle keep-alive connection is kept open.
+	IdleTimeout time.Duration
 	// ShutdownTimeout is the time budget for in-flight requests on shutdown.
 	ShutdownTimeout time.Duration
 }
 
 // Load reads the configuration from the process environment and validates it.
-// Empty variables fall back to their default. Invalid values are reported
-// together in a single error so a bad deployment fails once, not one variable
-// at a time.
+// Empty variables fall back to their default, except DATABASE_URL which has
+// none. Invalid values are reported together in a single error so a bad
+// deployment fails once, not one variable at a time.
 func Load() (Config, error) {
 	l := &loader{}
 	cfg := Config{
 		Env:               l.str("APP_ENV", EnvDevelopment),
 		HTTPAddr:          l.str("HTTP_ADDR", ":8080"),
 		LogLevel:          l.level("LOG_LEVEL", slog.LevelInfo),
+		DatabaseURL:       l.str("DATABASE_URL", ""),
 		ReadHeaderTimeout: l.duration("READ_HEADER_TIMEOUT", 5*time.Second),
+		ReadTimeout:       l.duration("READ_TIMEOUT", 10*time.Second),
+		WriteTimeout:      l.duration("WRITE_TIMEOUT", 15*time.Second),
+		IdleTimeout:       l.duration("IDLE_TIMEOUT", 60*time.Second),
 		ShutdownTimeout:   l.duration("SHUTDOWN_TIMEOUT", 10*time.Second),
 	}
 
@@ -65,6 +77,9 @@ func (c Config) validate() []error {
 	}
 	if err := validateHTTPAddr(c.HTTPAddr); err != nil {
 		errs = append(errs, err)
+	}
+	if c.DatabaseURL == "" {
+		errs = append(errs, errors.New("DATABASE_URL: must be set, for example postgres://user:pass@localhost:5432/tasks?sslmode=disable"))
 	}
 
 	return errs

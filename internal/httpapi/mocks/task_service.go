@@ -187,40 +187,31 @@ func (_c *MockTaskService_Get_Call) RunAndReturn(run func(context.Context, uuid.
 }
 
 // List provides a mock function with given fields: ctx, f
-func (_m *MockTaskService) List(ctx context.Context, f task.Filter) ([]task.Task, int, error) {
+func (_m *MockTaskService) List(ctx context.Context, f task.Filter) (task.Page, error) {
 	ret := _m.Called(ctx, f)
 
 	if len(ret) == 0 {
 		panic("no return value specified for List")
 	}
 
-	var r0 []task.Task
-	var r1 int
-	var r2 error
-	if rf, ok := ret.Get(0).(func(context.Context, task.Filter) ([]task.Task, int, error)); ok {
+	var r0 task.Page
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, task.Filter) (task.Page, error)); ok {
 		return rf(ctx, f)
 	}
-	if rf, ok := ret.Get(0).(func(context.Context, task.Filter) []task.Task); ok {
+	if rf, ok := ret.Get(0).(func(context.Context, task.Filter) task.Page); ok {
 		r0 = rf(ctx, f)
 	} else {
-		if ret.Get(0) != nil {
-			r0 = ret.Get(0).([]task.Task)
-		}
+		r0 = ret.Get(0).(task.Page)
 	}
 
-	if rf, ok := ret.Get(1).(func(context.Context, task.Filter) int); ok {
+	if rf, ok := ret.Get(1).(func(context.Context, task.Filter) error); ok {
 		r1 = rf(ctx, f)
 	} else {
-		r1 = ret.Get(1).(int)
+		r1 = ret.Error(1)
 	}
 
-	if rf, ok := ret.Get(2).(func(context.Context, task.Filter) error); ok {
-		r2 = rf(ctx, f)
-	} else {
-		r2 = ret.Error(2)
-	}
-
-	return r0, r1, r2
+	return r0, r1
 }
 
 // MockTaskService_List_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'List'
@@ -242,12 +233,12 @@ func (_c *MockTaskService_List_Call) Run(run func(ctx context.Context, f task.Fi
 	return _c
 }
 
-func (_c *MockTaskService_List_Call) Return(_a0 []task.Task, _a1 int, _a2 error) *MockTaskService_List_Call {
-	_c.Call.Return(_a0, _a1, _a2)
+func (_c *MockTaskService_List_Call) Return(_a0 task.Page, _a1 error) *MockTaskService_List_Call {
+	_c.Call.Return(_a0, _a1)
 	return _c
 }
 
-func (_c *MockTaskService_List_Call) RunAndReturn(run func(context.Context, task.Filter) ([]task.Task, int, error)) *MockTaskService_List_Call {
+func (_c *MockTaskService_List_Call) RunAndReturn(run func(context.Context, task.Filter) (task.Page, error)) *MockTaskService_List_Call {
 	_c.Call.Return(run)
 	return _c
 }

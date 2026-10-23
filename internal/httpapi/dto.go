@@ -74,11 +74,12 @@ type ListResponse struct {
 	Page  PageMeta       `json:"page"`
 }
 
-// PageMeta describes where a page sits within the full result set.
+// PageMeta describes how to continue a listing. There is no total: a count on
+// every request costs more than it is worth for an append-mostly list, and
+// infinite scroll only needs to know whether another page exists.
 type PageMeta struct {
-	Total  int `json:"total"`
-	Limit  int `json:"limit"`
-	Offset int `json:"offset"`
+	HasNext    bool   `json:"has_next"`
+	NextCursor string `json:"next_cursor,omitempty"`
 }
 
 // ErrorResponse is the single error shape every endpoint returns.

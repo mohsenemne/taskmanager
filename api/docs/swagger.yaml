@@ -34,12 +34,10 @@ definitions:
     type: object
   httpapi.PageMeta:
     properties:
-      limit:
-        type: integer
-      offset:
-        type: integer
-      total:
-        type: integer
+      has_next:
+        type: boolean
+      next_cursor:
+        type: string
     type: object
   httpapi.TaskResponse:
     properties:
@@ -98,12 +96,10 @@ paths:
         minimum: 1
         name: limit
         type: integer
-      - default: 0
-        description: Offset
+      - description: Opaque cursor from page.next_cursor
         in: query
-        minimum: 0
-        name: offset
-        type: integer
+        name: cursor
+        type: string
       produces:
       - application/json
       responses:

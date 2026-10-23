@@ -98,13 +98,13 @@ curl -s -X POST localhost:8080/api/v1/tasks \
 ### List
 
 ```bash
-curl -s 'localhost:8080/api/v1/tasks?status=in_progress&assignee=sara&limit=20&offset=0'
+curl -s 'localhost:8080/api/v1/tasks?status=in_progress&limit=2'
 ```
 
 ```json
 {
   "items": [ { "id": "…", "title": "Ship it", "status": "in_progress" } ],
-  "page": { "total": 1, "limit": 20, "offset": 0 }
+  "page": { "has_next": true, "next_cursor": "eyJ2IjoxLCJ0cyI6…" }
 }
 ```
 
@@ -113,12 +113,19 @@ curl -s 'localhost:8080/api/v1/tasks?status=in_progress&assignee=sara&limit=20&o
 | `status` | string | — | `todo`, `in_progress` or `done` |
 | `assignee` | string | — | exact match |
 | `limit` | int | 20 | 1–100 |
-| `offset` | int | 0 | ≥ 0 |
+| `cursor` | string | — | opaque; pass `page.next_cursor` back |
 
-Newest first, ordered by `created_at DESC, id DESC` so pages are stable.
+Newest first, ordered by `created_at DESC, id DESC`. Pagination is keyset: send
+`page.next_cursor` as `cursor` to continue, and stop when `has_next` is false.
+Each page costs one index seek regardless of depth, and a row inserted or
+deleted between requests cannot make the client skip or repeat a task.
 
-Out-of-range values are rejected with `400` rather than silently clamped, so
-`page` always describes what the caller actually got.
+There is deliberately no total. Counting matching rows on every request is
+proportional to the table, not to the page, and infinite scroll does not need
+it — `has_next` answers the only question the client asks.
+
+A malformed or unknown-version cursor is rejected with `400`, as is a `limit`
+outside 1–100, rather than being silently clamped.
 
 ### Update
 
@@ -317,7 +324,8 @@ PostgreSQL for storage semantics, mocked edges for everything above it.
 | Decision | Alternative | Why |
 | --- | --- | --- |
 | UUIDv7 identifiers | `bigint` identity | Time-ordered, so inserts stay sequential, and identifiers can be generated before the insert. A `bigint` would be smaller and simpler if IDs never needed to leave the database or be created client-side. |
-| Offset pagination | Cursor / keyset pagination | Offset is the right fit for numbered pages: it is simpler, and the response can return a truthful `total`. If the UI moved to infinite scroll instead, a cursor would be better — it stays correct while rows are inserted or deleted, and its cost does not grow with depth, at the price of losing page jumps and a cheap `total`. |
+| Keyset (cursor) pagination | `OFFSET` / `LIMIT` | Stable while rows are inserted or deleted, and the cost of a page does not grow with depth, which is what infinite scroll needs. It gives up page numbers and a `total`: a paged UI that renders "page 3 of 17" would need an additional count endpoint. |
+| `DESC` index columns | `ASC` index columns | A B-tree scans backwards, so an `ASC` index would serve `ORDER BY created_at DESC, id DESC` with an `Index Scan Backward` at the same cost. `DESC` is written to mirror the query, and so that a future mixed ordering (`created_at DESC, id ASC`) becomes an explicit change in the migration rather than a silent reinterpretation. Direction also picks the default null placement, which is moot here because `created_at` is `NOT NULL`. |
 | PostgreSQL owns timestamps | Application clock | The application and the database can run on different hosts with different clocks. Letting the database stamp `created_at`/`updated_at` keeps them comparable; a test caught a real ordering bug caused by mixing the two. |
 | Scheduled `tasks_count` | Increment on write | A gauge updated after each write drifts as soon as one write fails or another writer appears. A query every 15 seconds is cheap and always true, at the cost of staleness. |
 | Generated mocks committed | Generate in CI | `go test ./...` works on a fresh clone with no toolchain step. Staleness is caught because the mock is passed where the interface is expected. |

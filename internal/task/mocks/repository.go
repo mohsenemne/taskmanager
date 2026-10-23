@@ -186,7 +186,7 @@ func (_c *MockRepository_Get_Call) RunAndReturn(run func(context.Context, uuid.U
 }
 
 // List provides a mock function with given fields: ctx, f
-func (_m *MockRepository) List(ctx context.Context, f task.Filter) ([]task.Task, int, error) {
+func (_m *MockRepository) List(ctx context.Context, f task.Filter) ([]task.Task, error) {
 	ret := _m.Called(ctx, f)
 
 	if len(ret) == 0 {
@@ -194,9 +194,8 @@ func (_m *MockRepository) List(ctx context.Context, f task.Filter) ([]task.Task,
 	}
 
 	var r0 []task.Task
-	var r1 int
-	var r2 error
-	if rf, ok := ret.Get(0).(func(context.Context, task.Filter) ([]task.Task, int, error)); ok {
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, task.Filter) ([]task.Task, error)); ok {
 		return rf(ctx, f)
 	}
 	if rf, ok := ret.Get(0).(func(context.Context, task.Filter) []task.Task); ok {
@@ -207,19 +206,13 @@ func (_m *MockRepository) List(ctx context.Context, f task.Filter) ([]task.Task,
 		}
 	}
 
-	if rf, ok := ret.Get(1).(func(context.Context, task.Filter) int); ok {
+	if rf, ok := ret.Get(1).(func(context.Context, task.Filter) error); ok {
 		r1 = rf(ctx, f)
 	} else {
-		r1 = ret.Get(1).(int)
+		r1 = ret.Error(1)
 	}
 
-	if rf, ok := ret.Get(2).(func(context.Context, task.Filter) error); ok {
-		r2 = rf(ctx, f)
-	} else {
-		r2 = ret.Error(2)
-	}
-
-	return r0, r1, r2
+	return r0, r1
 }
 
 // MockRepository_List_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'List'
@@ -241,12 +234,12 @@ func (_c *MockRepository_List_Call) Run(run func(ctx context.Context, f task.Fil
 	return _c
 }
 
-func (_c *MockRepository_List_Call) Return(tasks []task.Task, total int, err error) *MockRepository_List_Call {
-	_c.Call.Return(tasks, total, err)
+func (_c *MockRepository_List_Call) Return(_a0 []task.Task, _a1 error) *MockRepository_List_Call {
+	_c.Call.Return(_a0, _a1)
 	return _c
 }
 
-func (_c *MockRepository_List_Call) RunAndReturn(run func(context.Context, task.Filter) ([]task.Task, int, error)) *MockRepository_List_Call {
+func (_c *MockRepository_List_Call) RunAndReturn(run func(context.Context, task.Filter) ([]task.Task, error)) *MockRepository_List_Call {
 	_c.Call.Return(run)
 	return _c
 }

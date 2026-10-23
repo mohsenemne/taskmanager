@@ -193,40 +193,71 @@ func (s *HandlerSuite) TestGetMapsNotFound() {
 	s.assertError(rec, http.StatusNotFound, "not_found")
 }
 
-func (s *HandlerSuite) TestListReturnsPage() {
+func (s *HandlerSuite) TestListReturnsPageAndCursor() {
+	next := task.Cursor{CreatedAt: time.Now().UTC(), ID: uuid.New()}
+
 	s.svc.EXPECT().
 		List(mock.Anything, mock.MatchedBy(func(f task.Filter) bool {
 			return f.Status == task.StatusDone &&
 				f.Assignee != nil && *f.Assignee == "mohsen" &&
-				f.Limit == 5 && f.Offset == 2
+				f.Limit == 5 && f.After == nil
 		})).
-		Return([]task.Task{{ID: uuid.New(), Title: "shipped", Status: task.StatusDone}}, 7, nil)
+		Return(task.Page{
+			Items:   []task.Task{{ID: uuid.New(), Title: "shipped", Status: task.StatusDone}},
+			HasNext: true,
+			Next:    &next,
+		}, nil).
+		Once()
 
-	rec := s.do(http.MethodGet, "/api/v1/tasks?status=done&assignee=mohsen&limit=5&offset=2", "")
+	s.svc.EXPECT().
+		List(mock.Anything, mock.MatchedBy(func(f task.Filter) bool {
+			return f.After != nil && f.After.ID == next.ID
+		})).
+		Return(task.Page{Items: []task.Task{}, HasNext: false}, nil).
+		Once()
+
+	rec := s.do(
+		http.MethodGet,
+		"/api/v1/tasks?status=done&assignee=mohsen&limit=5",
+		"",
+	)
 	s.Require().Equal(http.StatusOK, rec.Code)
 
-	var body struct {
+	var first struct {
 		Items []struct {
 			Title string `json:"title"`
 		} `json:"items"`
 		Page struct {
-			Total  int `json:"total"`
-			Limit  int `json:"limit"`
-			Offset int `json:"offset"`
+			HasNext    bool   `json:"has_next"`
+			NextCursor string `json:"next_cursor"`
 		} `json:"page"`
 	}
-	s.Require().NoError(json.Unmarshal(rec.Body.Bytes(), &body))
-	s.Require().Len(body.Items, 1)
-	s.Equal("shipped", body.Items[0].Title)
-	s.Equal(7, body.Page.Total)
-	s.Equal(5, body.Page.Limit)
-	s.Equal(2, body.Page.Offset)
+	s.Require().NoError(json.Unmarshal(rec.Body.Bytes(), &first))
+	s.Require().Len(first.Items, 1)
+	s.Equal("shipped", first.Items[0].Title)
+	s.True(first.Page.HasNext)
+	s.NotEmpty(first.Page.NextCursor)
+
+	// The cursor from one response must drive the next request.
+	rec = s.do(http.MethodGet, "/api/v1/tasks?cursor="+first.Page.NextCursor, "")
+	s.Require().Equal(http.StatusOK, rec.Code)
+
+	var second struct {
+		Items []struct{} `json:"items"`
+		Page  struct {
+			HasNext    bool   `json:"has_next"`
+			NextCursor string `json:"next_cursor"`
+		} `json:"page"`
+	}
+	s.Require().NoError(json.Unmarshal(rec.Body.Bytes(), &second))
+	s.False(second.Page.HasNext)
+	s.Empty(second.Page.NextCursor)
 }
 
 func (s *HandlerSuite) TestListUsesDefaultPage() {
 	s.svc.EXPECT().
-		List(mock.Anything, task.Filter{Limit: task.DefaultPageSize, Offset: 0}).
-		Return(nil, 0, nil)
+		List(mock.Anything, task.Filter{Limit: task.DefaultPageSize}).
+		Return(task.Page{Items: []task.Task{}}, nil)
 
 	rec := s.do(http.MethodGet, "/api/v1/tasks", "")
 	s.Require().Equal(http.StatusOK, rec.Code)
@@ -237,6 +268,12 @@ func (s *HandlerSuite) TestListUsesDefaultPage() {
 	s.Require().NoError(json.Unmarshal(rec.Body.Bytes(), &body))
 	s.NotNil(body.Items, "an empty page must serialise as [] rather than null")
 	s.Len(body.Items, 0)
+}
+
+func (s *HandlerSuite) TestListRejectsInvalidCursor() {
+	// No EXPECT: a malformed cursor is rejected before the service is called.
+	rec := s.do(http.MethodGet, "/api/v1/tasks?cursor=not-a-cursor", "")
+	s.assertError(rec, http.StatusBadRequest, "invalid_request")
 }
 
 func (s *HandlerSuite) TestListRejectsUnknownStatus() {

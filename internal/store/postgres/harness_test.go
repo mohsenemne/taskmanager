@@ -148,9 +148,9 @@ func (s *HarnessSuite) TestFilterIndexesExist() {
 	s.Require().NoError(rows.Err())
 
 	for _, want := range []string{
-		"tasks_assignee_idx",
+		"tasks_assignee_keyset_idx",
 		"tasks_created_at_idx",
-		"tasks_status_idx",
+		"tasks_status_keyset_idx",
 	} {
 		s.Contains(names, want)
 	}

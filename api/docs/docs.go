@@ -53,11 +53,9 @@ const docTemplate = `{
                         "in": "query"
                     },
                     {
-                        "minimum": 0,
-                        "type": "integer",
-                        "default": 0,
-                        "description": "Offset",
-                        "name": "offset",
+                        "type": "string",
+                        "description": "Opaque cursor from page.next_cursor",
+                        "name": "cursor",
                         "in": "query"
                     }
                 ],
@@ -338,14 +336,11 @@ const docTemplate = `{
         "httpapi.PageMeta": {
             "type": "object",
             "properties": {
-                "limit": {
-                    "type": "integer"
+                "has_next": {
+                    "type": "boolean"
                 },
-                "offset": {
-                    "type": "integer"
-                },
-                "total": {
-                    "type": "integer"
+                "next_cursor": {
+                    "type": "string"
                 }
             }
         },

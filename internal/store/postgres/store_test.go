@@ -91,10 +91,9 @@ func (s *RepositorySuite) TestListFiltersByStatus() {
 	s.createTask(task.Task{Title: "b", Status: task.StatusDone})
 	s.createTask(task.Task{Title: "c", Status: task.StatusDone})
 
-	page, total, err := s.repo.List(context.Background(), task.Filter{Status: task.StatusDone})
+	page, err := s.repo.List(context.Background(), task.Filter{Status: task.StatusDone})
 	s.Require().NoError(err)
 
-	s.Equal(2, total)
 	s.Require().Len(page, 2)
 
 	for _, item := range page {
@@ -107,15 +106,71 @@ func (s *RepositorySuite) TestListFiltersByAssignee() {
 	s.createTask(task.Task{Title: "b", Status: task.StatusTodo, Assignee: ptr("sara")})
 	s.createTask(task.Task{Title: "c", Status: task.StatusTodo})
 
-	page, total, err := s.repo.List(context.Background(), task.Filter{Assignee: ptr("mohsen")})
+	page, err := s.repo.List(context.Background(), task.Filter{Assignee: ptr("mohsen")})
 	s.Require().NoError(err)
 
-	s.Equal(1, total)
 	s.Require().Len(page, 1)
 	s.Equal("a", page[0].Title)
 }
 
-func (s *RepositorySuite) TestListPaginatesNewestFirst() {
+func (s *RepositorySuite) TestListReturnsNewestFirst() {
+	s.seedOrderedTasks()
+
+	page, err := s.repo.List(context.Background(), task.Filter{Limit: 2})
+	s.Require().NoError(err)
+
+	s.Require().Len(page, 2)
+	s.Equal("task 2", page[0].Title)
+	s.Equal("task 1", page[1].Title)
+}
+
+func (s *RepositorySuite) TestListContinuesAfterCursor() {
+	s.seedOrderedTasks()
+
+	first, err := s.repo.List(context.Background(), task.Filter{Limit: 2})
+	s.Require().NoError(err)
+	s.Require().Len(first, 2)
+
+	last := first[len(first)-1]
+	second, err := s.repo.List(context.Background(), task.Filter{
+		Limit: 2,
+		After: &task.Cursor{CreatedAt: last.CreatedAt, ID: last.ID},
+	})
+	s.Require().NoError(err)
+
+	s.Require().Len(second, 1)
+	s.Equal("task 0", second[0].Title)
+}
+
+// TestListIsStableWhenARowIsInserted is the reason for keyset pagination: a
+// write between two pages must not make the client repeat or skip a row.
+func (s *RepositorySuite) TestListIsStableWhenARowIsInserted() {
+	s.seedOrderedTasks()
+
+	first, err := s.repo.List(context.Background(), task.Filter{Limit: 2})
+	s.Require().NoError(err)
+	s.Require().Len(first, 2)
+
+	s.createTask(task.Task{
+		Title:     "task 3",
+		Status:    task.StatusTodo,
+		CreatedAt: time.Date(2026, 1, 1, 12, 3, 0, 0, time.UTC),
+	})
+
+	last := first[len(first)-1]
+	second, err := s.repo.List(context.Background(), task.Filter{
+		Limit: 2,
+		After: &task.Cursor{CreatedAt: last.CreatedAt, ID: last.ID},
+	})
+	s.Require().NoError(err)
+
+	s.Require().Len(second, 1)
+	s.Equal("task 0", second[0].Title, "the new row must not shift the continuation")
+}
+
+// seedOrderedTasks creates task 0, 1 and 2 one minute apart, so the newest is
+// task 2.
+func (s *RepositorySuite) seedOrderedTasks() {
 	base := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 	for i := range 3 {
 		s.createTask(task.Task{
@@ -124,13 +179,6 @@ func (s *RepositorySuite) TestListPaginatesNewestFirst() {
 			CreatedAt: base.Add(time.Duration(i) * time.Minute),
 		})
 	}
-
-	page, total, err := s.repo.List(context.Background(), task.Filter{Limit: 1, Offset: 1})
-	s.Require().NoError(err)
-
-	s.Equal(3, total)
-	s.Require().Len(page, 1)
-	s.Equal("task 1", page[0].Title)
 }
 
 func (s *RepositorySuite) TestUpdateReplacesMutableFields() {

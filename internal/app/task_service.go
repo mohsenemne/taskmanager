@@ -118,7 +118,7 @@ func (s *TaskService) Get(
 func (s *TaskService) List(
 	ctx context.Context,
 	f task.Filter,
-) ([]task.Task, int, error) {
+) (task.Page, error) {
 	ctx, span := startSpan(ctx, "task.list")
 	defer span.End()
 
@@ -130,24 +130,21 @@ func (s *TaskService) List(
 		)
 		recordError(span, err)
 
-		return nil, 0, err
+		return task.Page{}, err
 	}
 
+	limit := f.Limit
 	switch {
-	case f.Limit <= 0:
-		f.Limit = task.DefaultPageSize
-	case f.Limit > task.MaxPageSize:
-		f.Limit = task.MaxPageSize
+	case limit <= 0:
+		limit = task.DefaultPageSize
+	case limit > task.MaxPageSize:
+		limit = task.MaxPageSize
 	}
 
-	if f.Offset < 0 {
-		f.Offset = 0
-	}
+	// Ask for one row more than the page: "has next" then costs no extra query.
+	f.Limit = limit + 1
 
-	span.SetAttributes(
-		attribute.Int("page.limit", f.Limit),
-		attribute.Int("page.offset", f.Offset),
-	)
+	span.SetAttributes(attribute.Int("page.limit", limit))
 
 	if f.Status != "" {
 		span.SetAttributes(attribute.String("filter.status", string(f.Status)))
@@ -157,18 +154,41 @@ func (s *TaskService) List(
 		span.SetAttributes(attribute.String("filter.assignee", *f.Assignee))
 	}
 
-	items, total, err := s.repo.List(ctx, f)
-	if err != nil {
-		recordError(span, err)
-		return nil, 0, err
+	if f.After != nil {
+		span.SetAttributes(attribute.String("page.after", f.After.ID.String()))
 	}
 
+	items, err := s.repo.List(ctx, f)
+	if err != nil {
+		recordError(span, err)
+		return task.Page{}, err
+	}
+
+	page := buildPage(items, limit)
+
 	span.SetAttributes(
-		attribute.Int("result.count", len(items)),
-		attribute.Int("result.total", total),
+		attribute.Int("result.count", len(page.Items)),
+		attribute.Bool("result.has_next", page.HasNext),
 	)
 
-	return items, total, nil
+	return page, nil
+}
+
+// buildPage trims the look-ahead row and derives the cursor for the page that
+// follows.
+func buildPage(items []task.Task, limit int) task.Page {
+	page := task.Page{Items: items}
+	if len(items) > limit {
+		page.HasNext = true
+		page.Items = items[:limit]
+	}
+
+	if page.HasNext && len(page.Items) > 0 {
+		last := page.Items[len(page.Items)-1]
+		page.Next = &task.Cursor{CreatedAt: last.CreatedAt, ID: last.ID}
+	}
+
+	return page
 }
 
 // Update replaces the mutable fields of a task.

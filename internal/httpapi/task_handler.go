@@ -23,7 +23,7 @@ const maxBodyBytes = 1 << 20 // 1 MiB
 type TaskService interface {
 	Create(ctx context.Context, t task.Task) (task.Task, error)
 	Get(ctx context.Context, id uuid.UUID) (task.Task, error)
-	List(ctx context.Context, f task.Filter) ([]task.Task, int, error)
+	List(ctx context.Context, f task.Filter) (task.Page, error)
 	Update(ctx context.Context, t task.Task) (task.Task, error)
 	Delete(ctx context.Context, id uuid.UUID) error
 }
@@ -102,7 +102,7 @@ func (h *taskHandler) get(c *gin.Context) {
 // @Param        status    query     string  false  "Filter by status"  Enums(todo, in_progress, done)
 // @Param        assignee  query     string  false  "Filter by assignee"
 // @Param        limit     query     int     false  "Page size"  default(20)  minimum(1)  maximum(100)
-// @Param        offset    query     int     false  "Offset"     default(0)   minimum(0)
+// @Param        cursor    query     string  false  "Opaque cursor from page.next_cursor"
 // @Success      200       {object}  ListResponse
 // @Failure      400       {object}  ErrorResponse
 // @Failure      500       {object}  ErrorResponse
@@ -114,22 +114,22 @@ func (h *taskHandler) list(c *gin.Context) {
 		return
 	}
 
-	items, total, err := h.svc.List(c.Request.Context(), filter)
+	page, err := h.svc.List(c.Request.Context(), filter)
 	if err != nil {
 		writeError(c, err)
 		return
 	}
 
 	resp := ListResponse{
-		Items: make([]TaskResponse, 0, len(items)),
-		Page: PageMeta{
-			Total:  total,
-			Limit:  filter.Limit,
-			Offset: filter.Offset,
-		},
+		Items: make([]TaskResponse, 0, len(page.Items)),
+		Page:  PageMeta{HasNext: page.HasNext},
 	}
-	for _, item := range items {
+	for _, item := range page.Items {
 		resp.Items = append(resp.Items, newTaskResponse(item))
+	}
+
+	if page.Next != nil {
+		resp.Page.NextCursor = encodeCursor(*page.Next)
 	}
 
 	c.JSON(http.StatusOK, resp)
@@ -250,16 +250,13 @@ func parseFilter(c *gin.Context) (task.Filter, error) {
 		filter.Limit = limit
 	}
 
-	if raw := c.Query("offset"); raw != "" {
-		offset, err := strconv.Atoi(raw)
-		if err != nil || offset < 0 {
-			return task.Filter{}, errors.New(
-				"offset must be a non-negative integer",
-			)
-		}
-
-		filter.Offset = offset
+	// An empty cursor means "start from the newest task".
+	cursor, err := decodeCursor(c.Query("cursor"))
+	if err != nil {
+		return task.Filter{}, errors.New("cursor is not valid")
 	}
+
+	filter.After = cursor
 
 	return filter, nil
 }

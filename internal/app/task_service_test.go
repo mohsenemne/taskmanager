@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/mock"
@@ -135,50 +136,83 @@ func (s *TaskServiceSuite) TestGetPropagatesNotFound() {
 
 func (s *TaskServiceSuite) TestListAppliesDefaults() {
 	s.repo.EXPECT().
-		List(mock.Anything, task.Filter{Limit: task.DefaultPageSize, Offset: 0}).
-		Return([]task.Task{}, 0, nil)
+		List(mock.Anything, task.Filter{Limit: task.DefaultPageSize + 1}).
+		Return([]task.Task{}, nil)
 
-	_, _, err := s.svc.List(context.Background(), task.Filter{})
-	s.Require().NoError(err)
-}
-
-func (s *TaskServiceSuite) TestListClampsNegativeOffset() {
-	s.repo.EXPECT().
-		List(mock.Anything, task.Filter{Limit: task.DefaultPageSize, Offset: 0}).
-		Return([]task.Task{}, 0, nil)
-
-	_, _, err := s.svc.List(context.Background(), task.Filter{Offset: -5})
+	_, err := s.svc.List(context.Background(), task.Filter{})
 	s.Require().NoError(err)
 }
 
 func (s *TaskServiceSuite) TestListCapsPageSize() {
 	s.repo.EXPECT().
-		List(mock.Anything, task.Filter{Limit: task.MaxPageSize, Offset: 0}).
-		Return([]task.Task{}, 0, nil)
+		List(mock.Anything, task.Filter{Limit: task.MaxPageSize + 1}).
+		Return([]task.Task{}, nil)
 
-	_, _, err := s.svc.List(context.Background(), task.Filter{Limit: 500})
+	_, err := s.svc.List(context.Background(), task.Filter{Limit: 500})
 	s.Require().NoError(err)
 }
 
 func (s *TaskServiceSuite) TestListRejectsUnknownStatus() {
 	// No EXPECT: the status is rejected before storage is consulted.
-	_, _, err := s.svc.List(context.Background(), task.Filter{Status: "blocked"})
+	_, err := s.svc.List(context.Background(), task.Filter{Status: "blocked"})
 	s.ErrorIs(err, task.ErrInvalid)
+}
+
+func (s *TaskServiceSuite) TestListReportsMorePages() {
+	first := task.Task{ID: uuid.New(), Title: "first"}
+	second := task.Task{ID: uuid.New(), Title: "second"}
+	extra := task.Task{ID: uuid.New(), Title: "extra"}
+
+	s.repo.EXPECT().
+		List(mock.Anything, task.Filter{Limit: 3}).
+		Return([]task.Task{first, second, extra}, nil)
+
+	page, err := s.svc.List(context.Background(), task.Filter{Limit: 2})
+	s.Require().NoError(err)
+
+	s.True(page.HasNext)
+	s.Require().Len(page.Items, 2)
+	s.Require().NotNil(page.Next)
+	s.Equal(second.ID, page.Next.ID)
+}
+
+func (s *TaskServiceSuite) TestListStopsAtTheLastPage() {
+	only := task.Task{ID: uuid.New(), Title: "only"}
+
+	s.repo.EXPECT().
+		List(mock.Anything, task.Filter{Limit: 3}).
+		Return([]task.Task{only}, nil)
+
+	page, err := s.svc.List(context.Background(), task.Filter{Limit: 2})
+	s.Require().NoError(err)
+
+	s.False(page.HasNext)
+	s.Nil(page.Next)
+	s.Require().Len(page.Items, 1)
 }
 
 func (s *TaskServiceSuite) TestListPassesFiltersThrough() {
 	assignee := "mohsen"
-	want := task.Filter{Status: task.StatusDone, Assignee: &assignee, Limit: 5, Offset: 2}
+	after := &task.Cursor{CreatedAt: time.Now().UTC(), ID: uuid.New()}
 
 	s.repo.EXPECT().
-		List(mock.Anything, want).
-		Return([]task.Task{{Title: "shipped"}}, 1, nil)
+		List(mock.Anything, task.Filter{
+			Status:   task.StatusDone,
+			Assignee: &assignee,
+			Limit:    6,
+			After:    after,
+		}).
+		Return([]task.Task{{Title: "shipped"}}, nil)
 
-	items, total, err := s.svc.List(context.Background(), want)
+	page, err := s.svc.List(context.Background(), task.Filter{
+		Status:   task.StatusDone,
+		Assignee: &assignee,
+		Limit:    5,
+		After:    after,
+	})
 	s.Require().NoError(err)
-	s.Equal(1, total)
-	s.Require().Len(items, 1)
-	s.Equal("shipped", items[0].Title)
+	s.Require().Len(page.Items, 1)
+	s.Equal("shipped", page.Items[0].Title)
 }
 
 func (s *TaskServiceSuite) TestUpdateAppliesNormalization() {

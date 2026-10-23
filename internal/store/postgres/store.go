@@ -119,20 +119,23 @@ func (s *Store) Get(ctx context.Context, id uuid.UUID) (task.Task, error) {
 	return found, nil
 }
 
-// List returns one page of tasks and the total number of matches.
-func (s *Store) List(
-	ctx context.Context,
-	f task.Filter,
-) ([]task.Task, int, error) {
-	where, args := buildListFilter(f)
+// List returns up to Filter.Limit tasks, newest first, continuing after
+// Filter.After when it is set.
+func (s *Store) List(ctx context.Context, f task.Filter) ([]task.Task, error) {
+	conditions, args := buildListFilter(f)
 
-	var total int
-	if err := s.pool.QueryRow(
-		ctx,
-		"SELECT count(*) FROM tasks"+where,
-		args...,
-	).Scan(&total); err != nil {
-		return nil, 0, fmt.Errorf("count tasks: %w", err)
+	if f.After != nil {
+		args = append(args, f.After.CreatedAt, f.After.ID)
+		conditions = append(conditions, fmt.Sprintf(
+			"(created_at, id) < ($%d, $%d)",
+			len(args)-1,
+			len(args),
+		))
+	}
+
+	where := ""
+	if len(conditions) > 0 {
+		where = " WHERE " + strings.Join(conditions, " AND ")
 	}
 
 	limit := f.Limit
@@ -140,20 +143,16 @@ func (s *Store) List(
 		limit = defaultLimit
 	}
 
-	offset := max(f.Offset, 0)
+	args = append(args, limit)
 
 	query := fmt.Sprintf(
-		`SELECT %s FROM tasks%s `+
-			`ORDER BY created_at DESC, id DESC LIMIT $%d OFFSET $%d`,
-		taskColumns,
-		where,
-		len(args)+1,
-		len(args)+2,
+		`SELECT %s FROM tasks%s ORDER BY created_at DESC, id DESC LIMIT $%d`,
+		taskColumns, where, len(args),
 	)
 
-	rows, err := s.pool.Query(ctx, query, append(args, limit, offset)...)
+	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {
-		return nil, 0, fmt.Errorf("list tasks: %w", err)
+		return nil, fmt.Errorf("list tasks: %w", err)
 	}
 	defer rows.Close()
 
@@ -162,21 +161,22 @@ func (s *Store) List(
 	for rows.Next() {
 		item, err := scanTask(rows)
 		if err != nil {
-			return nil, 0, fmt.Errorf("scan task: %w", err)
+			return nil, fmt.Errorf("scan task: %w", err)
 		}
 
 		tasks = append(tasks, item)
 	}
 
 	if err := rows.Err(); err != nil {
-		return nil, 0, fmt.Errorf("list tasks: %w", err)
+		return nil, fmt.Errorf("list tasks: %w", err)
 	}
 
-	return tasks, total, nil
+	return tasks, nil
 }
 
-// buildListFilter turns a filter into a WHERE clause and its arguments.
-func buildListFilter(f task.Filter) (string, []any) {
+// buildListFilter turns the non-positional parts of a filter into SQL
+// conditions and their arguments.
+func buildListFilter(f task.Filter) ([]string, []any) {
 	var (
 		conditions []string
 		args       []any
@@ -195,11 +195,7 @@ func buildListFilter(f task.Filter) (string, []any) {
 		)
 	}
 
-	if len(conditions) == 0 {
-		return "", args
-	}
-
-	return " WHERE " + strings.Join(conditions, " AND "), args
+	return conditions, args
 }
 
 // Update replaces the mutable fields of a task and returns the stored row.

@@ -173,6 +173,8 @@ Environment variables, all optional except `DATABASE_URL`.
 | Variable | Default | Notes |
 | --- | --- | --- |
 | `DATABASE_URL` | — | required, e.g. `postgres://user:pass@host:5432/tasks?sslmode=disable` |
+| `REDIS_ADDR` | — | empty disables the cache entirely |
+| `CACHE_TTL` | `60s` | how long a cached task or page may be served |
 | `APP_ENV` | `development` | `development` or `production` |
 | `HTTP_ADDR` | `:8080` | `host:port` |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
@@ -195,7 +197,7 @@ make test-all          # both
 make cover             # both, with a coverage total
 ```
 
-Current state: `make test` green, `make test-integration` green, coverage ~91%.
+Current state: `make test` green, `make test-integration` green, coverage ~90%.
 
 The split matters. Unit tests cover the application rules against a mock
 repository and the HTTP layer against a mocked service; neither touches a
@@ -296,6 +298,12 @@ Invalidation is delete-on-write. Create drops the list key; update and delete
 drop the item key and the list key. The TTL is a backstop for a failed `DEL` or
 a write that happened while Redis was down, not the primary mechanism.
 
+That leaves one narrow race: a read that missed and started its flight before a
+write commits can store the pre-write page after the writer's `DEL`, leaving it
+stale until the TTL. The window is the flight duration, and the cost is a stale
+list for at most one TTL — never a stale item on a write path. A generation key
+would close it, at the price of a second key to read and bump on every request.
+
 Reads fail open. Every cache call has a 50 ms budget, and a timeout, connection
 error or unparseable payload is treated as a miss. A Redis outage costs
 latency, not availability, which is why `/readyz` still checks only PostgreSQL.
@@ -323,6 +331,8 @@ flowchart LR
   client[Client] -->|HTTP| router[Gin router]
   router --> mw[middleware:<br/>tracing, logging, metrics]
   mw --> svc[app.TaskService]
+  svc --> cache[app.Cache]
+  cache -.-> redis[(Redis)]
   svc --> port[task.Repository]
   port -.-> store[postgres.Store]
   store --> db[(PostgreSQL)]
@@ -340,7 +350,7 @@ cmd/api/            wiring: config, pool, migrations, router, shutdown
 internal/task/      domain: Task, Status, Repository port, errors, mocks
 internal/app/       use cases: validation, defaults, pagination, spans
 internal/httpapi/   transport: routes, DTOs, error mapping, mocks
-internal/store/     adapter: pgx repository, migrations runner
+internal/store/     adapters: pgx repository, migrations runner, redis cache
 internal/observability/  logging, metrics, tracing, middleware
 migrations/         embedded SQL, applied by golang-migrate at startup
 api/docs/           generated OpenAPI spec (swag)
@@ -348,9 +358,9 @@ api/docs/           generated OpenAPI spec (swag)
 
 Three decisions shape the rest:
 
-**The repository is a port.** `task.Repository` is declared where it is consumed,
-so the use cases are testable without a database and the domain stays free of
-driver types.
+**The repository and the cache are ports.** `task.Repository` and `app.Cache`
+are declared where they are consumed, so the use cases are testable without
+PostgreSQL or Redis and the domain stays free of driver types.
 
 **Use cases live in their own package.** With one aggregate this is a judgement
 call; the package is the place where a second aggregate would be coordinated
@@ -372,6 +382,7 @@ PostgreSQL for storage semantics, mocked edges for everything above it.
 | Fail open on cache errors | Fail the request | A cache is an optimisation, so a Redis outage should cost latency, not availability. No negative caching keeps the fallback honest. |
 | Sequential cache-aside | Parallel or hedged fetch | A hit must not issue a query — that is the reason the cache exists. Racing both would hide the cache hop on a miss (sub-millisecond here) but send a query on every hit, and cancelling the context cannot undo a statement already planned. Parallel fetch pays off only when the cache is remote enough that the hop costs more than the query. |
 | `singleflight` around the miss path | Let every miss query | Invalidation makes the hot key go cold for everyone at once, so concurrent requests would run the same query N times. Collapsing them costs a map lookup and is per-process: three replicas mean up to three queries instead of one per request. |
+| Data cache (current) | HTTP response cache | A hit skips the database query, which is the bottleneck; skipping routing, the handler and JSON encoding on top saves roughly 0.1 ms of a ~2 ms request. A data cache also serves any caller (gRPC, CLI, worker), while a response cache is HTTP-only, and a shared response cache must vary on `Authorization` or it leaks between users. Invalidation decides it: one `DEL` here versus finding every URL whose body contains the changed task. |
 | PostgreSQL owns timestamps | Application clock | The application and the database can run on different hosts with different clocks. Letting the database stamp `created_at`/`updated_at` keeps them comparable; a test caught a real ordering bug caused by mixing the two. |
 | Scheduled `tasks_count` | Increment on write | A gauge updated after each write drifts as soon as one write fails or another writer appears. A query every 15 seconds is cheap and always true, at the cost of staleness. |
 | Generated mocks committed | Generate in CI | `go test ./...` works on a fresh clone with no toolchain step. Staleness is caught because the mock is passed where the interface is expected. |
@@ -383,8 +394,9 @@ PostgreSQL for storage semantics, mocked edges for everything above it.
   a project, not a line.
 - **`assignee` is a free-text string**, not a user entity. The service does not
   verify that the assignee exists.
-- **Single instance.** Migrations run at boot, and the in-memory cache — there
-  isn't one yet — would be process-local.
+- **Single instance.** Migrations run at boot, and the `tasks_count` gauge is
+  refreshed per process, so replicas would each poll. The cache is shared
+  through Redis and does not depend on this.
 - **Hard deletes.** No soft-delete column, no audit trail.
 - **No optimistic concurrency.** Two updates to the same task resolve last-write
   wins.

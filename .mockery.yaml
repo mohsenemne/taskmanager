@@ -15,3 +15,6 @@ packages:
   github.com/mohsenemne/taskmanager/internal/httpapi:
     interfaces:
       TaskService:
+  github.com/mohsenemne/taskmanager/internal/app:
+    interfaces:
+      Cache:

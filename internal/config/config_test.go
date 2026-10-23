@@ -18,6 +18,8 @@ var envKeys = []string{
 	"LOG_LEVEL",
 	"DATABASE_URL",
 	"OTEL_EXPORTER_OTLP_ENDPOINT",
+	"REDIS_ADDR",
+	"CACHE_TTL",
 	"READ_HEADER_TIMEOUT",
 	"READ_TIMEOUT",
 	"WRITE_TIMEOUT",
@@ -52,6 +54,8 @@ func (s *ConfigSuite) TestLoadDefaults() {
 	s.Equal(slog.LevelInfo, cfg.LogLevel)
 	s.Equal(testDatabaseURL, cfg.DatabaseURL)
 	s.Empty(cfg.TraceEndpoint, "spans go to stdout unless a collector is configured")
+	s.Empty(cfg.RedisAddr, "caching is disabled without REDIS_ADDR")
+	s.Equal(60*time.Second, cfg.CacheTTL)
 	s.Equal(5*time.Second, cfg.ReadHeaderTimeout)
 	s.Equal(10*time.Second, cfg.ReadTimeout)
 	s.Equal(15*time.Second, cfg.WriteTimeout)

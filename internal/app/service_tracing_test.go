@@ -52,7 +52,7 @@ func TestCreateRecordsItsOwnSpan(t *testing.T) {
 		Create(mock.Anything, mock.Anything).
 		Return(task.Task{ID: id, Title: "traced"}, nil)
 
-	svc := NewTaskService(repo)
+	svc := NewTaskService(repo, nil, 0)
 	_, err := svc.Create(context.Background(), task.Task{Title: "traced"})
 	require.NoError(t, err)
 
@@ -70,7 +70,7 @@ func TestListRecordsFilterAndResultAttributes(t *testing.T) {
 		List(mock.Anything, mock.Anything).
 		Return([]task.Task{{Title: "a"}}, nil)
 
-	svc := NewTaskService(repo)
+	svc := NewTaskService(repo, nil, 0)
 	_, err := svc.List(context.Background(), task.Filter{Status: task.StatusDone, Limit: 5})
 	require.NoError(t, err)
 
@@ -84,7 +84,7 @@ func TestListRecordsFilterAndResultAttributes(t *testing.T) {
 func TestValidationFailureIsRecordedWithoutFailingTheSpan(t *testing.T) {
 	exporter := withRecordingSpans(t)
 
-	svc := NewTaskService(mocks.NewMockRepository(t))
+	svc := NewTaskService(mocks.NewMockRepository(t), nil, 0)
 	_, err := svc.Create(context.Background(), task.Task{})
 	require.ErrorIs(t, err, task.ErrInvalid)
 
@@ -101,7 +101,7 @@ func TestUnexpectedErrorFailsTheSpan(t *testing.T) {
 		List(mock.Anything, mock.Anything).
 		Return(nil, errors.New("connection reset by peer"))
 
-	svc := NewTaskService(repo)
+	svc := NewTaskService(repo, nil, 0)
 	_, err := svc.List(context.Background(), task.Filter{})
 	require.Error(t, err)
 

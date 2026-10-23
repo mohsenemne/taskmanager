@@ -223,6 +223,9 @@ production, that is a one-line change in `newServer`.
 | `http_requests_in_flight` | gauge | — |
 | `tasks_count` | gauge | — |
 | `db_pool_acquired_conns`, `db_pool_idle_conns`, `db_pool_total_conns`, `db_pool_max_conns` | gauges | — |
+| `cache_hits_total` | counter | — |
+| `cache_misses_total` | counter | — |
+| `cache_errors_total` | counter | `operation` |
 | `app_build_info` | gauge | `version`, `environment` |
 | `go_*`, `process_*` | collectors | — |
 
@@ -276,6 +279,36 @@ follows the status class: 2xx/3xx `info`, 4xx `warn`, 5xx `error`. The `trace_id
 and `span_id` make the line resolvable in the trace UI. The DSN is never logged —
 only the database host and name.
 
+### Cache
+
+Redis holds two kinds of entries, both written with a 60 s TTL:
+
+| Key | Value | Written on |
+| --- | --- | --- |
+| `tasks:item:v1:{id}` | one task | read miss |
+| `tasks:list:v1` | the unfiltered first page | read miss |
+
+Only the unfiltered first page is cached. Filtered, cursored or custom-limit
+listings read through to the database: a single key means a single `DEL` on
+write, with nothing to enumerate and no `SCAN` on the request path.
+
+Invalidation is delete-on-write. Create drops the list key; update and delete
+drop the item key and the list key. The TTL is a backstop for a failed `DEL` or
+a write that happened while Redis was down, not the primary mechanism.
+
+Reads fail open. Every cache call has a 50 ms budget, and a timeout, connection
+error or unparseable payload is treated as a miss. A Redis outage costs
+latency, not availability, which is why `/readyz` still checks only PostgreSQL.
+Cache operations appear in the trace as their own spans, so cache time is
+separable from database time:
+
+```text
+task.get
+  cache.get    cache.hit=false
+  SELECT
+  cache.set
+```
+
 ## Design
 
 ```mermaid
@@ -326,6 +359,11 @@ PostgreSQL for storage semantics, mocked edges for everything above it.
 | UUIDv7 identifiers | `bigint` identity | Time-ordered, so inserts stay sequential, and identifiers can be generated before the insert. A `bigint` would be smaller and simpler if IDs never needed to leave the database or be created client-side. |
 | Keyset (cursor) pagination | `OFFSET` / `LIMIT` | Stable while rows are inserted or deleted, and the cost of a page does not grow with depth, which is what infinite scroll needs. It gives up page numbers and a `total`: a paged UI that renders "page 3 of 17" would need an additional count endpoint. |
 | `DESC` index columns | `ASC` index columns | A B-tree scans backwards, so an `ASC` index would serve `ORDER BY created_at DESC, id DESC` with an `Index Scan Backward` at the same cost. `DESC` is written to mirror the query, and so that a future mixed ordering (`created_at DESC, id ASC`) becomes an explicit change in the migration rather than a silent reinterpretation. Direction also picks the default null placement, which is moot here because `created_at` is `NOT NULL`. |
+| Cache only the hot page | Cache every listing | One key means one `DEL` per write and no key enumeration. Filtered and deep listings always read through, trading hit rate for a cache that cannot go stale in a way you cannot find. |
+| Delete-on-write + TTL | Write-through, or a generation counter | Write-through keeps two stores in agreement on every write and caches data nobody reads. A generation counter is needed when many keys must be invalidated; here there is exactly one. |
+| `volatile-lru` | `allkeys-lru` | Identical while every key carries a TTL, but `volatile-` refuses to evict a future non-expiring key instead of silently dropping it. |
+| Fail open on cache errors | Fail the request | A cache is an optimisation, so a Redis outage should cost latency, not availability. No negative caching keeps the fallback honest. |
+| Sequential cache-aside | Parallel or hedged fetch | A hit must not issue a query — that is the reason the cache exists. Racing both would hide the cache hop on a miss (sub-millisecond here) but send a query on every hit, and cancelling the context cannot undo a statement already planned. Parallel fetch pays off only when the cache is remote enough that the hop costs more than the query. |
 | PostgreSQL owns timestamps | Application clock | The application and the database can run on different hosts with different clocks. Letting the database stamp `created_at`/`updated_at` keeps them comparable; a test caught a real ordering bug caused by mixing the two. |
 | Scheduled `tasks_count` | Increment on write | A gauge updated after each write drifts as soon as one write fails or another writer appears. A query every 15 seconds is cheap and always true, at the cost of staleness. |
 | Generated mocks committed | Generate in CI | `go test ./...` works on a fresh clone with no toolchain step. Staleness is caught because the mock is passed where the interface is expected. |

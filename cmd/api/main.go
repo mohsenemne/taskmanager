@@ -27,6 +27,7 @@ import (
 	"github.com/mohsenemne/taskmanager/internal/httpapi"
 	"github.com/mohsenemne/taskmanager/internal/observability"
 	"github.com/mohsenemne/taskmanager/internal/store/postgres"
+	redisstore "github.com/mohsenemne/taskmanager/internal/store/redis"
 )
 
 // @title       Task Manager API
@@ -45,6 +46,10 @@ const taskCountInterval = 15 * time.Second
 
 // serviceName identifies this service in traces.
 const serviceName = "task-manager"
+
+// cacheTimeout bounds a cache call. Exceeding it counts as an error and the
+// request falls back to the database rather than waiting.
+const cacheTimeout = 50 * time.Millisecond
 
 func main() {
 	if err := run(); err != nil {
@@ -87,9 +92,14 @@ func run() error {
 
 	logger.Info("migrations applied")
 
+	metrics := observability.NewMetrics(version, cfg.Env)
+
+	cache, closeCache := setupCache(cfg, metrics)
+	defer closeCache()
+
 	gin.SetMode(gin.ReleaseMode)
 
-	srv := newServer(ctx, cfg, pool, logger)
+	srv := newServer(ctx, cfg, pool, metrics, cache, logger)
 
 	return serve(ctx, srv, cfg, logger)
 }
@@ -160,18 +170,39 @@ func setupPool(
 	return pool, nil
 }
 
+// setupCache returns the cache used for hot reads. Without REDIS_ADDR caching
+// is disabled and every read goes through to the database.
+func setupCache(
+	cfg config.Config,
+	metrics *observability.Metrics,
+) (app.Cache, func()) {
+	if cfg.RedisAddr == "" {
+		return nil, func() {}
+	}
+
+	client := redisstore.Open(cfg.RedisAddr)
+	cache := observability.NewInstrumentedCache(
+		redisstore.New(client),
+		metrics,
+		cacheTimeout,
+	)
+
+	return cache, func() { _ = client.Close() }
+}
+
 // newServer wires the HTTP surface, its middleware, the operational endpoints
 // and the metrics registry.
 func newServer(
 	ctx context.Context,
 	cfg config.Config,
 	pool *pgxpool.Pool,
+	metrics *observability.Metrics,
+	cache app.Cache,
 	logger *slog.Logger,
 ) *http.Server {
 	store := postgres.New(pool)
-	svc := app.NewTaskService(store)
+	svc := app.NewTaskService(store, cache, cfg.CacheTTL)
 
-	metrics := observability.NewMetrics(version, cfg.Env)
 	poolStats := func() observability.PoolStats {
 		stat := pool.Stat()
 

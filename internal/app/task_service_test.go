@@ -26,7 +26,7 @@ func TestTaskServiceSuite(t *testing.T) {
 
 func (s *TaskServiceSuite) SetupTest() {
 	s.repo = mocks.NewMockRepository(s.T())
-	s.svc = NewTaskService(s.repo)
+	s.svc = NewTaskService(s.repo, nil, 0)
 }
 
 // The tests below script the repository with MatchedBy where the point is what

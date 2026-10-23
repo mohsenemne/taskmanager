@@ -3,9 +3,11 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/google/uuid"
@@ -22,7 +24,19 @@ const (
 	maxTitleLength = 200
 	// tracerName identifies this package's spans.
 	tracerName = "github.com/mohsenemne/taskmanager/internal/app"
+
+	// hotListKey holds the unfiltered first page. It is the only listing
+	// cached: one key means one DEL per write, with nothing to enumerate.
+	hotListKey = "tasks:list:v1"
+
+	// taskKeyBase prefixes the cache key of a single task.
+	taskKeyBase = "tasks:item:v1:"
 )
+
+// taskKey is the cache key of a single task.
+func taskKey(id uuid.UUID) string {
+	return taskKeyBase + id.String()
+}
 
 // startSpan resolves the globally configured tracer at call time, so tests can
 // swap the provider without this package holding a stale reference.
@@ -51,12 +65,19 @@ func recordError(span trace.Span, err error) {
 // TaskService applies the task rules on top of a task.Repository. It is the
 // entry point the HTTP layer talks to.
 type TaskService struct {
-	repo task.Repository
+	repo  task.Repository
+	cache Cache
+	ttl   time.Duration
 }
 
-// NewTaskService returns a service backed by repo.
-func NewTaskService(repo task.Repository) *TaskService {
-	return &TaskService{repo: repo}
+// NewTaskService returns a service backed by repo. A nil cache disables
+// caching, which is how the service runs without Redis.
+func NewTaskService(
+	repo task.Repository,
+	cache Cache,
+	ttl time.Duration,
+) *TaskService {
+	return &TaskService{repo: repo, cache: cache, ttl: ttl}
 }
 
 // Create validates in, applies defaults and stores it.
@@ -84,6 +105,7 @@ func (s *TaskService) Create(
 	}
 
 	span.SetAttributes(attribute.String("task.id", created.ID.String()))
+	s.invalidate(ctx, hotListKey)
 
 	return created, nil
 }
@@ -103,11 +125,22 @@ func (s *TaskService) Get(
 		return task.Task{}, err
 	}
 
+	if cached, ok := s.cachedTask(ctx, taskKey(id)); ok {
+		span.SetAttributes(
+			attribute.String("task.id", cached.ID.String()),
+			attribute.Bool("cache.hit", true),
+		)
+
+		return cached, nil
+	}
+
 	found, err := s.repo.Get(ctx, id)
 	if err != nil {
 		recordError(span, err)
 		return task.Task{}, err
 	}
+
+	s.storeTask(ctx, taskKey(id), found)
 
 	span.SetAttributes(attribute.String("task.id", found.ID.String()))
 
@@ -145,17 +178,13 @@ func (s *TaskService) List(
 	f.Limit = limit + 1
 
 	span.SetAttributes(attribute.Int("page.limit", limit))
+	annotateFilter(span, f)
 
-	if f.Status != "" {
-		span.SetAttributes(attribute.String("filter.status", string(f.Status)))
-	}
-
-	if f.Assignee != nil {
-		span.SetAttributes(attribute.String("filter.assignee", *f.Assignee))
-	}
-
-	if f.After != nil {
-		span.SetAttributes(attribute.String("page.after", f.After.ID.String()))
+	cacheable := s.cacheable(f, limit)
+	if cacheable {
+		if page, ok := s.cachedPage(ctx, hotListKey); ok {
+			return page, nil
+		}
 	}
 
 	items, err := s.repo.List(ctx, f)
@@ -165,6 +194,10 @@ func (s *TaskService) List(
 	}
 
 	page := buildPage(items, limit)
+
+	if cacheable {
+		s.storePage(ctx, hotListKey, page)
+	}
 
 	span.SetAttributes(
 		attribute.Int("result.count", len(page.Items)),
@@ -189,6 +222,120 @@ func buildPage(items []task.Task, limit int) task.Page {
 	}
 
 	return page
+}
+
+// annotateFilter records the filter on the span.
+func annotateFilter(span trace.Span, f task.Filter) {
+	if f.Status != "" {
+		span.SetAttributes(attribute.String("filter.status", string(f.Status)))
+	}
+
+	if f.Assignee != nil {
+		span.SetAttributes(attribute.String("filter.assignee", *f.Assignee))
+	}
+
+	if f.After != nil {
+		span.SetAttributes(attribute.String("page.after", f.After.ID.String()))
+	}
+}
+
+// cacheable reports whether a listing is the hot, unfiltered first page. Any
+// filter, cursor or custom page size goes straight to the database: caching
+// those would need a way to enumerate keys on write, and one key does not.
+func (s *TaskService) cacheable(f task.Filter, limit int) bool {
+	return s.cache != nil &&
+		f.After == nil &&
+		f.Status == "" &&
+		f.Assignee == nil &&
+		limit == task.DefaultPageSize
+}
+
+// cachedTask returns the cached task, if the cache is enabled and holds a
+// readable entry. A corrupt entry is treated as a miss.
+func (s *TaskService) cachedTask(
+	ctx context.Context,
+	key string,
+) (task.Task, bool) {
+	if s.cache == nil {
+		return task.Task{}, false
+	}
+
+	raw, found, err := s.cache.Get(ctx, key)
+	if err != nil || !found {
+		return task.Task{}, false
+	}
+
+	var cached task.Task
+	if err := json.Unmarshal(raw, &cached); err != nil {
+		return task.Task{}, false
+	}
+
+	return cached, true
+}
+
+// storeTask caches a task. Failures are ignored: the TTL and the next write
+// both bound staleness, and a read must not fail because the cache did.
+func (s *TaskService) storeTask(ctx context.Context, key string, t task.Task) {
+	if s.cache == nil {
+		return
+	}
+
+	raw, err := json.Marshal(t)
+	if err != nil {
+		return
+	}
+
+	_ = s.cache.Set(ctx, key, raw, s.ttl)
+}
+
+// cachedPage returns the cached hot listing, if any.
+func (s *TaskService) cachedPage(
+	ctx context.Context,
+	key string,
+) (task.Page, bool) {
+	if s.cache == nil {
+		return task.Page{}, false
+	}
+
+	raw, found, err := s.cache.Get(ctx, key)
+	if err != nil || !found {
+		return task.Page{}, false
+	}
+
+	var page task.Page
+	if err := json.Unmarshal(raw, &page); err != nil {
+		return task.Page{}, false
+	}
+
+	return page, true
+}
+
+// storePage caches the hot listing.
+func (s *TaskService) storePage(
+	ctx context.Context,
+	key string,
+	page task.Page,
+) {
+	if s.cache == nil {
+		return
+	}
+
+	raw, err := json.Marshal(page)
+	if err != nil {
+		return
+	}
+
+	_ = s.cache.Set(ctx, key, raw, s.ttl)
+}
+
+// invalidate drops the entries a write made stale. Failures are ignored: the
+// TTL bounds the damage and a cache outage must not fail the write.
+func (s *TaskService) invalidate(ctx context.Context, keys ...string) {
+	if s.cache == nil {
+		return
+	}
+
+	_ = s.cache.Delete(ctx, keys...)
 }
 
 // Update replaces the mutable fields of a task.
@@ -220,6 +367,8 @@ func (s *TaskService) Update(
 		return task.Task{}, err
 	}
 
+	s.invalidate(ctx, taskKey(in.ID), hotListKey)
+
 	return updated, nil
 }
 
@@ -241,6 +390,8 @@ func (s *TaskService) Delete(ctx context.Context, id uuid.UUID) error {
 		recordError(span, err)
 		return err
 	}
+
+	s.invalidate(ctx, taskKey(id), hotListKey)
 
 	return nil
 }

@@ -36,6 +36,10 @@ type Config struct {
 	// TraceEndpoint is an OTLP/HTTP collector address. Empty writes spans to
 	// stdout, which is enough for local development.
 	TraceEndpoint string
+	// RedisAddr enables the cache when set. Empty disables caching entirely.
+	RedisAddr string
+	// CacheTTL bounds how long a cached task or page may be served.
+	CacheTTL time.Duration
 	// ReadHeaderTimeout bounds how long a client may take to send request
 	// headers.
 	ReadHeaderTimeout time.Duration
@@ -61,6 +65,8 @@ func Load() (Config, error) {
 		LogLevel:          l.level("LOG_LEVEL", slog.LevelInfo),
 		DatabaseURL:       l.str("DATABASE_URL", ""),
 		TraceEndpoint:     l.str("OTEL_EXPORTER_OTLP_ENDPOINT", ""),
+		RedisAddr:         l.str("REDIS_ADDR", ""),
+		CacheTTL:          l.duration("CACHE_TTL", 60*time.Second),
 		ReadHeaderTimeout: l.duration("READ_HEADER_TIMEOUT", 5*time.Second),
 		ReadTimeout:       l.duration("READ_TIMEOUT", 10*time.Second),
 		WriteTimeout:      l.duration("WRITE_TIMEOUT", 15*time.Second),

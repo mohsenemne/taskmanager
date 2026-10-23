@@ -26,6 +26,10 @@ type Metrics struct {
 	RequestDuration  *prometheus.HistogramVec
 	RequestsInFlight prometheus.Gauge
 	TasksCount       prometheus.Gauge
+
+	CacheHits   prometheus.Counter
+	CacheMisses prometheus.Counter
+	CacheErrors *prometheus.CounterVec
 }
 
 // NewMetrics builds the registry, the application instruments and the runtime
@@ -69,6 +73,8 @@ func NewMetrics(version, environment string) *Metrics {
 		}),
 	}
 
+	m.CacheHits, m.CacheMisses, m.CacheErrors = newCacheCounters()
+
 	buildInfo := prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "app_build_info",
 		Help: "Build information; the value is always 1.",
@@ -82,10 +88,37 @@ func NewMetrics(version, environment string) *Metrics {
 		m.RequestDuration,
 		m.RequestsInFlight,
 		m.TasksCount,
+		m.CacheHits,
+		m.CacheMisses,
+		m.CacheErrors,
 		buildInfo,
 	)
 
 	return m
+}
+
+// newCacheCounters builds the read-through cache instruments.
+func newCacheCounters() (
+	prometheus.Counter,
+	prometheus.Counter,
+	*prometheus.CounterVec,
+) {
+	hits := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "cache_hits_total",
+		Help: "Cache reads that returned a value.",
+	})
+
+	misses := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "cache_misses_total",
+		Help: "Cache reads that found nothing.",
+	})
+
+	errors := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "cache_errors_total",
+		Help: "Cache operations that failed, by operation.",
+	}, []string{"operation"})
+
+	return hits, misses, errors
 }
 
 // Handler serves the registry in the Prometheus text format. OpenMetrics is

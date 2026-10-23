@@ -299,6 +299,13 @@ a write that happened while Redis was down, not the primary mechanism.
 Reads fail open. Every cache call has a 50 ms budget, and a timeout, connection
 error or unparseable payload is treated as a miss. A Redis outage costs
 latency, not availability, which is why `/readyz` still checks only PostgreSQL.
+
+Concurrent misses are collapsed with `singleflight`. A write invalidates the hot
+key, so every request in flight would otherwise miss at the same moment and run
+the same query. The first one queries and caches; the rest wait and share its
+result, with a re-check inside the flight for callers that joined late. The
+flight runs under a detached context with its own deadline, so one client
+disconnecting cannot cancel work the others are waiting on.
 Cache operations appear in the trace as their own spans, so cache time is
 separable from database time:
 
@@ -364,6 +371,7 @@ PostgreSQL for storage semantics, mocked edges for everything above it.
 | `volatile-lru` | `allkeys-lru` | Identical while every key carries a TTL, but `volatile-` refuses to evict a future non-expiring key instead of silently dropping it. |
 | Fail open on cache errors | Fail the request | A cache is an optimisation, so a Redis outage should cost latency, not availability. No negative caching keeps the fallback honest. |
 | Sequential cache-aside | Parallel or hedged fetch | A hit must not issue a query — that is the reason the cache exists. Racing both would hide the cache hop on a miss (sub-millisecond here) but send a query on every hit, and cancelling the context cannot undo a statement already planned. Parallel fetch pays off only when the cache is remote enough that the hop costs more than the query. |
+| `singleflight` around the miss path | Let every miss query | Invalidation makes the hot key go cold for everyone at once, so concurrent requests would run the same query N times. Collapsing them costs a map lookup and is per-process: three replicas mean up to three queries instead of one per request. |
 | PostgreSQL owns timestamps | Application clock | The application and the database can run on different hosts with different clocks. Letting the database stamp `created_at`/`updated_at` keeps them comparable; a test caught a real ordering bug caused by mixing the two. |
 | Scheduled `tasks_count` | Increment on write | A gauge updated after each write drifts as soon as one write fails or another writer appears. A query every 15 seconds is cheap and always true, at the cost of staleness. |
 | Generated mocks committed | Generate in CI | `go test ./...` works on a fresh clone with no toolchain step. Staleness is caught because the mock is passed where the interface is expected. |

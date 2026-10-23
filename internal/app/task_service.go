@@ -15,6 +15,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
+	"golang.org/x/sync/singleflight"
 
 	"github.com/mohsenemne/taskmanager/internal/task"
 )
@@ -31,7 +32,14 @@ const (
 
 	// taskKeyBase prefixes the cache key of a single task.
 	taskKeyBase = "tasks:item:v1:"
+
+	// flightTimeout bounds the work shared by concurrent callers.
+	flightTimeout = 5 * time.Second
 )
+
+// errFlightType guards the type assertion on a singleflight result. It cannot
+// happen with the closures below, but returning an error beats panicking.
+var errFlightType = errors.New("singleflight returned an unexpected type")
 
 // taskKey is the cache key of a single task.
 func taskKey(id uuid.UUID) string {
@@ -68,6 +76,8 @@ type TaskService struct {
 	repo  task.Repository
 	cache Cache
 	ttl   time.Duration
+	// group collapses concurrent misses for the same key into one query.
+	group singleflight.Group
 }
 
 // NewTaskService returns a service backed by repo. A nil cache disables
@@ -125,22 +135,11 @@ func (s *TaskService) Get(
 		return task.Task{}, err
 	}
 
-	if cached, ok := s.cachedTask(ctx, taskKey(id)); ok {
-		span.SetAttributes(
-			attribute.String("task.id", cached.ID.String()),
-			attribute.Bool("cache.hit", true),
-		)
-
-		return cached, nil
-	}
-
-	found, err := s.repo.Get(ctx, id)
+	found, err := s.loadTask(ctx, id)
 	if err != nil {
 		recordError(span, err)
 		return task.Task{}, err
 	}
-
-	s.storeTask(ctx, taskKey(id), found)
 
 	span.SetAttributes(attribute.String("task.id", found.ID.String()))
 
@@ -180,29 +179,137 @@ func (s *TaskService) List(
 	span.SetAttributes(attribute.Int("page.limit", limit))
 	annotateFilter(span, f)
 
-	cacheable := s.cacheable(f, limit)
-	if cacheable {
-		if page, ok := s.cachedPage(ctx, hotListKey); ok {
-			return page, nil
-		}
-	}
-
-	items, err := s.repo.List(ctx, f)
+	page, err := s.listPage(ctx, f, limit)
 	if err != nil {
 		recordError(span, err)
 		return task.Page{}, err
-	}
-
-	page := buildPage(items, limit)
-
-	if cacheable {
-		s.storePage(ctx, hotListKey, page)
 	}
 
 	span.SetAttributes(
 		attribute.Int("result.count", len(page.Items)),
 		attribute.Bool("result.has_next", page.HasNext),
 	)
+
+	return page, nil
+}
+
+// loadTask reads a task through the cache. Concurrent misses for the same id
+// share one repository call instead of each running the same query.
+func (s *TaskService) loadTask(
+	ctx context.Context,
+	id uuid.UUID,
+) (task.Task, error) {
+	key := taskKey(id)
+
+	if cached, ok := s.cachedTask(ctx, key); ok {
+		return cached, nil
+	}
+
+	if s.cache == nil {
+		return s.repo.Get(ctx, id)
+	}
+
+	value, err, _ := s.group.Do(key, func() (any, error) {
+		return s.fetchTask(ctx, key, id)
+	})
+	if err != nil {
+		return task.Task{}, err
+	}
+
+	loaded, ok := value.(task.Task)
+	if !ok {
+		return task.Task{}, errFlightType
+	}
+
+	return loaded, nil
+}
+
+// fetchTask runs inside a flight. It reads under a detached context with its
+// own deadline, so a client disconnecting does not cancel work the other
+// callers are waiting on.
+func (s *TaskService) fetchTask(
+	ctx context.Context,
+	key string,
+	id uuid.UUID,
+) (task.Task, error) {
+	flightCtx, cancel := context.WithTimeout(
+		context.WithoutCancel(ctx),
+		flightTimeout,
+	)
+	defer cancel()
+
+	if cached, ok := s.cachedTask(flightCtx, key); ok {
+		return cached, nil
+	}
+
+	found, err := s.repo.Get(flightCtx, id)
+	if err != nil {
+		return task.Task{}, err
+	}
+
+	s.storeTask(flightCtx, key, found)
+
+	return found, nil
+}
+
+// listPage serves the hot page through the cache and collapses concurrent
+// misses into one query. Every other listing reads straight through.
+func (s *TaskService) listPage(
+	ctx context.Context,
+	f task.Filter,
+	limit int,
+) (task.Page, error) {
+	if !s.cacheable(f, limit) {
+		items, err := s.repo.List(ctx, f)
+		if err != nil {
+			return task.Page{}, err
+		}
+
+		return buildPage(items, limit), nil
+	}
+
+	if cached, ok := s.cachedPage(ctx, hotListKey); ok {
+		return cached, nil
+	}
+
+	value, err, _ := s.group.Do(hotListKey, func() (any, error) {
+		return s.fetchPage(ctx, f, limit)
+	})
+	if err != nil {
+		return task.Page{}, err
+	}
+
+	page, ok := value.(task.Page)
+	if !ok {
+		return task.Page{}, errFlightType
+	}
+
+	return page, nil
+}
+
+// fetchPage runs inside a flight and reads under a detached context.
+func (s *TaskService) fetchPage(
+	ctx context.Context,
+	f task.Filter,
+	limit int,
+) (task.Page, error) {
+	flightCtx, cancel := context.WithTimeout(
+		context.WithoutCancel(ctx),
+		flightTimeout,
+	)
+	defer cancel()
+
+	if cached, ok := s.cachedPage(flightCtx, hotListKey); ok {
+		return cached, nil
+	}
+
+	items, err := s.repo.List(flightCtx, f)
+	if err != nil {
+		return task.Page{}, err
+	}
+
+	page := buildPage(items, limit)
+	s.storePage(flightCtx, hotListKey, page)
 
 	return page, nil
 }
